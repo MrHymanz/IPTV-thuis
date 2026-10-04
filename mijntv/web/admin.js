@@ -103,6 +103,8 @@ function startFavoriteDrag(event, row, handle) {
 async function load() {
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);
   favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten`; $('refresh').disabled = !status.has_source;
+  $('epg-refresh').disabled = !status.has_epg_source;
+  $('epg-status').textContent = status.epg_updated_at ? `EPG bijgewerkt: ${new Date(status.epg_updated_at*1000).toLocaleString('nl-NL')}. Automatisch elke 4 uur.` : 'EPG wordt bij een Xtream-login automatisch opgehaald en elke 4 uur vernieuwd.';
   const selected = $('group').value; $('group').replaceChildren(new Option('Alle groepen', '')); groups.forEach(g => $('group').add(new Option(g || 'Zonder groep', g))); $('group').value = selected;
   renderFavorites(); await search();
 }
@@ -115,6 +117,7 @@ $('xtream-form').onsubmit = async e => {
   $('xtream-password').value = '';
   await mutate('/api/import/xtream', body, 'Zenders opgehaald.');
 };
+$('epg-refresh').onclick = () => mutate('/api/epg/refresh', {}, 'Programmagids vernieuwd.');
 $('refresh').onclick = () => mutate('/api/refresh', {}, 'Lijst vernieuwd.');
 $('manual-form').onsubmit = async e => { e.preventDefault(); const body = {label:$('manual-name').value, url:$('manual-url').value}; $('manual-url').value = ''; await mutate('/api/favorites/manual', body, 'Eigen zender toegevoegd.'); };
 $('search-form').onsubmit = e => { e.preventDefault(); offset = 0; search().catch(e => message(e.message,true)); };

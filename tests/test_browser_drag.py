@@ -102,3 +102,26 @@ class BrowserDragTests(unittest.TestCase):
         self.page.locator('.channel').first.click()
         expect(self.page.locator('#player-logo.has-image img')).to_be_visible()
         self.assertEqual(self.errors,[])
+
+    def test_epg_follows_selection_and_zapping(self):
+        import time
+        now = int(time.time())
+        with self.store.connect() as db:
+            for i, channel_id in enumerate(self.ids[:2]):
+                epg_id = f'test{i}.nl'
+                db.execute('UPDATE channels SET tvg_id=? WHERE id=?', (epg_id, channel_id))
+                db.executemany('INSERT INTO epg_programmes VALUES (?,?,?,?)',
+                               [(epg_id, now-300, now+600, f'Nu programma {i+1}'),
+                                (epg_id, now+600, now+1800, f'Volgend programma {i+1}')])
+        self.page.goto(f'http://127.0.0.1:{self.server.server_port}/tv')
+        expect(self.page.locator('#programme')).to_contain_text('Nu programma 1')
+        expect(self.page.locator('#programme')).to_contain_text('Volgend programma 1')
+        self.page.keyboard.press('ArrowRight')
+        expect(self.page.locator('#programme')).to_contain_text('Nu programma 2')
+        self.page.keyboard.press('Enter')
+        expect(self.page.locator('#player-programme')).to_contain_text('Nu programma 2')
+        self.page.keyboard.press('ArrowLeft')
+        expect(self.page.locator('#player-programme')).to_contain_text('Nu programma 1')
+        self.page.keyboard.press('Escape')
+        expect(self.page.locator('#programme')).to_contain_text('Nu programma 1')
+        self.assertEqual(self.errors, [])

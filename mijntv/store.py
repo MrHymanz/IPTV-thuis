@@ -171,6 +171,10 @@ class Store:
                     id TEXT PRIMARY KEY, label TEXT NOT NULL, position INTEGER NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS epg_programmes (
+                    epg_id TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL, title TEXT NOT NULL,
+                    PRIMARY KEY(epg_id,start)
+                );
             ''')
             if 'logo' not in {row[1] for row in db.execute('PRAGMA table_info(channels)')}:
                 db.execute("ALTER TABLE channels ADD COLUMN logo TEXT NOT NULL DEFAULT ''")
@@ -311,7 +315,27 @@ class Store:
                         version = hashlib.sha256(item['logo'].encode()).hexdigest()[:12]
                         item['logo'] = '/api/logos/' + item['id'] + '?v=' + version
                 result.append(item)
+            guide = self.programmes()
+            for item in result:
+                item['epg'] = guide.get(item['id'], {'now': None, 'next': None})
             return result
+
+    def programmes(self, now=None):
+        now = time.time() if now is None else now
+        result = {}
+        with self.connect() as db:
+            for kind, condition, direction in [('now', 'start<=? AND end>?', 'DESC'),
+                                                ('next', 'start>?', 'ASC')]:
+                arguments = (now, now) if kind == 'now' else (now,)
+                rows = db.execute(f'''SELECT f.id,p.start,p.end,p.title FROM favorites f
+                    LEFT JOIN channels c ON c.id=f.id
+                    LEFT JOIN epg_programmes p ON p.rowid=(SELECT rowid FROM epg_programmes
+                       WHERE epg_id=trim(c.tvg_id) AND {condition} ORDER BY start {direction} LIMIT 1)''', arguments)
+                for row in rows:
+                    item = result.setdefault(row['id'], {'now': None, 'next': None})
+                    if row['title'] is not None:
+                        item[kind] = {'start': row['start'], 'end': row['end'], 'title': row['title']}
+        return result
 
     def add_favorite(self, channel_id, label=''):
         with self.connect() as db:

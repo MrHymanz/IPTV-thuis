@@ -66,6 +66,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=refresh_loop, args=(store, stop), daemon=True).start()
+    threading.Thread(target=server.epg.run, args=(stop,), daemon=True).start()
     print(f'Webbeheer: http://<IP-adres-van-deze-pc>:{args.port}/admin — gebruikersnaam admin', flush=True)
     if bootstrap and not store.favorites():
         print(f'Eerste beheerwachtwoord: {bootstrap}', flush=True)

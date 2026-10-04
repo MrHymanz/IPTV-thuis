@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .store import MAX_PLAYLIST, xtream_playlist_url
 from .logos import LogoCache
+from .epg import EPG
 
 
 def hash_password(password, salt):
@@ -41,6 +42,7 @@ class AdminServer(ThreadingHTTPServer):
     def __init__(self, address, store, auth, web_directory):
         self.store, self.auth, self.web_directory = store, auth, Path(web_directory)
         self.logos = LogoCache(Path(store.path).parent)
+        self.epg = EPG(store)
         super().__init__(address, Handler)
 
 
@@ -94,7 +96,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(404, {'error': 'Logo niet beschikbaar.'})
             elif parts.path == '/api/status':
                 self.reply(200, {'channels': store.catalog(limit=0)['total'], 'favorites': len(store.favorites()),
-                                 'has_source': bool(store.setting('source'))})
+                                 'has_source': bool(store.setting('source')),
+                                 'has_epg_source': bool(self.server.epg.configuration()[0]),
+                                 'epg_updated_at': float(store.setting('epg_refreshed_at', '0'))})
             elif parts.path == '/api/channels':
                 offset = max(0, int(params.get('offset', ['0'])[0]))
                 self.reply(200, store.catalog(params.get('q', [''])[0], params.get('group', [''])[0], offset))
@@ -149,6 +153,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(text, str) or len(text.encode()) > MAX_PLAYLIST:
                         raise ValueError('Ongeldige of te grote M3U.')
                     result['imported'] = store.import_playlist(text)
+            elif path == '/api/epg/refresh':
+                result['programmes'] = self.server.epg.refresh()
             elif path == '/api/refresh':
                 result['imported'] = store.refresh_source()
             elif path == '/api/favorites/add':

@@ -53,7 +53,7 @@ class TV:
         self.storage_label = self.label(storage, '', 17, color=MUTED)
         self.storage_label.pack(side='left')
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)
-        self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 21, color=MUTED)
+        self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 17, color=MUTED)
         self.subtitle.pack(anchor='w', padx=60, pady=(10, 25))
         self.tiles = tk.Frame(self.home, bg=BG)
         self.tiles.pack(fill='both', expand=True, padx=50)
@@ -81,8 +81,12 @@ class TV:
         self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Tijdens kijken: pijltjes of CH+/CH− om te zappen', 17, color=MUTED).pack(pady=(0, 25))
         self.setup = self.label(self.home, '', 20, color=AMBER)
         self.banner = tk.Frame(self.root, bg=BG)
-        self.banner_label = self.label(self.banner, '', 24, bold=True)
-        self.banner_label.pack(side='left', padx=30, pady=20)
+        banner_text = tk.Frame(self.banner, bg=BG)
+        banner_text.pack(side='left', padx=30, pady=14)
+        self.banner_label = self.label(banner_text, '', 24, bold=True)
+        self.banner_label.pack(anchor='w')
+        self.banner_programme = self.label(banner_text, '', 17, color=MUTED)
+        self.banner_programme.pack(anchor='w', pady=(7, 0))
         self.small_button(self.banner, '← Zenderlijst', self.go_home).pack(side='right', padx=30, pady=14)
         self.error = self.label(self.root, '', 25, color=AMBER)
         self.root.bind('<Key>', self.key)
@@ -191,9 +195,35 @@ class TV:
         self.page = self.selected // 10
         if not self.watching:
             self.render()
+        if self.watching:
+            self.update_programme()
         self.root.after(5000, self.refresh)
 
+    def programme_text(self):
+        if not self.channels:
+            return 'Selecteer een zender en druk op OK.'
+        guide = self.channels[self.selected].get('epg') or {}
+        lines = []
+        for key, label in [('now', 'Nu'), ('next', 'Straks')]:
+            programme = guide.get(key)
+            if programme:
+                start = time.strftime('%H:%M', time.localtime(programme['start']))
+                end = time.strftime('%H:%M', time.localtime(programme['end']))
+                title = programme['title']
+                title = title[:97] + '…' if len(title) > 100 else title
+                lines.append(f'{label}: {start}–{end}  {title}')
+            elif key == 'now':
+                lines.append('Nu: geen programmagegevens beschikbaar')
+        return '\n'.join(lines)
+
+    def update_programme(self):
+        text = self.programme_text()
+        width = max(200, self.root.winfo_screenwidth()-120)
+        self.subtitle.configure(text=text, wraplength=width)
+        self.banner_programme.configure(text=text, wraplength=max(200, width-350))
+
     def render(self):
+        self.update_programme()
         for i,b in enumerate(self.buttons):
             index = self.page*10+i
             if index < len(self.channels):
@@ -255,6 +285,7 @@ class TV:
         self.home.place_forget()
         self.banner.lift()
         self.banner_label.configure(text=f'{index+1} · {channel["label"]}   —   Verbinden…')
+        self.update_programme()
         self.show_banner(60)
         if self.pending_zap:
             self.root.after_cancel(self.pending_zap)

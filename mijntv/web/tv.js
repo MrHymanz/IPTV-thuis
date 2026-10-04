@@ -9,8 +9,17 @@ function channelLogo(container, channel) {
   const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.src = channel.logo;
   image.onload = () => { if (container.dataset.logo === channel.logo) { container.replaceChildren(image); container.classList.add('has-image'); } };
 }
+function programmeText(channel) {
+  const guide = channel?.epg || {};
+  const clock = value => new Date(value * 1000).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam'});
+  return [['now','Nu'], ['next','Straks']].map(([key,label]) => {
+    const item = guide[key];
+    return item ? `${label}: ${clock(item.start)}–${clock(item.end)}  ${item.title}` : key === 'now' ? 'Nu: geen programmagegevens beschikbaar' : '';
+  }).filter(Boolean).join('\n');
+}
 function render(focus = false) {
   grid.replaceChildren();
+  $('programme').textContent = favorites.length ? programmeText(favorites[selected]) : '';
   const page = Math.floor(selected / 10), pages = Math.max(1, Math.ceil(favorites.length / 10));
   if (!favorites.length) {
     const empty = document.createElement('p'); empty.className = 'empty';
@@ -25,7 +34,7 @@ function render(focus = false) {
     button.setAttribute('aria-label', `${index + 1}. ${channel.label}${channel.available ? '' : ', niet beschikbaar'}`);
     button.append(number, logo, label);
     button.onclick = () => { selected = index; openChannel(); };
-    button.onfocus = () => { selected = index; grid.querySelectorAll('.channel').forEach((b, j) => b.classList.toggle('selected', j === i)); };
+    button.onfocus = () => { selected = index; $('programme').textContent = programmeText(channel); grid.querySelectorAll('.channel').forEach((b, j) => b.classList.toggle('selected', j === i)); };
     grid.append(button);
   });
   $('page-label').textContent = `Pagina ${page + 1} van ${pages}`;
@@ -44,6 +53,7 @@ function openChannel() {
   watching = true; $('player-title').textContent = channel.label;
   channelLogo($('player-logo'), channel);
   $('current').textContent = `${selected + 1} · ${channel.label}`;
+  $('player-programme').textContent = programmeText(channel);
   $('player').hidden = false; $('home').inert = true; $('back').focus();
 }
 function closeChannel() { watching = false; $('player').hidden = true; $('home').inert = false; render(true); }
