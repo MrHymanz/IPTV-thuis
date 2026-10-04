@@ -89,6 +89,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request('POST','/api/favorites/manual',{'url':'https://example.test'})[0],400)
         self.assertEqual(self.request('POST','/api/not-found',{})[0],404)
 
+    def test_raw_file_upload_and_invalid_replacement(self):
+        def upload(body):
+            connection = HTTPConnection('127.0.0.1',self.port,timeout=5)
+            headers={'Authorization':'Basic '+base64.b64encode(b'admin:test-password-123').decode(),
+                     'Content-Type':'application/octet-stream','X-MijnTV':'1'}
+            connection.request('POST','/api/import/file',body,headers)
+            response=connection.getresponse()
+            result=(response.status,json.loads(response.read()))
+            connection.close()
+            return result
+        body=b'#EXTM3U\n#EXTINF:-1,Test\nhttps://example.test/stream'
+        self.assertEqual(upload(body),(200,{'ok':True,'imported':1}))
+        self.assertEqual(upload(b'not a playlist')[0],400)
+        self.assertEqual(self.store.catalog()['total'],1)
+
     def test_password_persisted_as_hash_and_not_plaintext(self):
         auth, generated = credentials(self.directory.name)
         self.assertIsNone(generated)
@@ -133,7 +148,7 @@ class ServerTests(unittest.TestCase):
 
     def test_invalid_xtream_login_does_not_fetch_or_replace_existing_catalog(self):
         self.store.manual('Bestaand','https://example.test/stream')
-        with patch('mijntv.server.fetch_playlist') as fetch:
+        with patch('mijntv.store.fetch_playlist') as fetch:
             for body in ({'server':'file:///secret','username':'user','password':'secret'},
                          {'server':'https://example.test','username':'user'},
                          {'server':'https://example.test','username':'user','password':''}):

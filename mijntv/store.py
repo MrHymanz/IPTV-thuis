@@ -1,16 +1,19 @@
 """Playlist and favorite storage; only Python's standard library is required."""
 import hashlib
+import io
 import json
 import os
 import re
 import sqlite3
 import uuid
 import threading
+import tempfile
 from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-MAX_PLAYLIST = 64 * 1024 * 1024
+MAX_PLAYLIST = 512 * 1024 * 1024
+MAX_LINE = 1024 * 1024
 ATTR = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
 
 
@@ -46,11 +49,15 @@ def stream_url(value):
     return value
 
 
-def parse_m3u(text):
+def iter_m3u(text):
     """Stable IDs exclude stream tokens. Exact identity duplicates are retained by occurrence."""
-    rows, pending, occurrences = [], None, {}
-    for line in text.lstrip('\ufeff').splitlines():
-        line = line.strip()
+    pending, occurrences, count = None, {}, 0
+    source = io.StringIO(text) if isinstance(text, str) else text
+    lines = iter(lambda: source.readline(MAX_LINE + 1), '') if hasattr(source, 'readline') else iter(source)
+    for line in lines:
+        if len(line) > MAX_LINE:
+            raise ValueError('Een regel in de M3U is groter dan 1 MB. Controleer het playlistformaat.')
+        line = line.strip().lstrip('\ufeff')
         if line.startswith('#EXTINF:'):
             # A comma inside a quoted attribute is not the name delimiter.
             quoted = False
@@ -80,26 +87,61 @@ def parse_m3u(text):
             occurrence = occurrences.get(identity, 0)
             occurrences[identity] = occurrence + 1
             channel_id = hashlib.sha256((identity + ':' + str(occurrence)).encode()).hexdigest()[:32]
-            rows.append((channel_id, name, group, url, attributes.get('tvg-id', '')))
-    if not rows:
+            count += 1
+            yield (channel_id, name, group, url, attributes.get('tvg-id', ''))
+    if not count:
         raise ValueError('Geen geldige zenders gevonden. Upload een uitgebreide M3U-lijst met EXTINF-regels.')
-    return rows
 
 
-def fetch_playlist(url):
+def parse_m3u(text):
+    """Convenience helper; database imports use the streaming iterator directly."""
+    return list(iter_m3u(text))
+
+
+class PlaylistTooLarge(ValueError):
+    def __init__(self):
+        super().__init__('De M3U is groter dan 512 MB.')
+
+
+def copy_playlist(source, destination, length=None):
+    """Copy bounded chunks to disk. Reject truncated uploads and over-limit downloads."""
+    if length is not None and not 0 <= length <= MAX_PLAYLIST:
+        raise PlaylistTooLarge()
+    total = 0
+    while length is None or total < length:
+        chunk = source.read(min(1024 * 1024, length - total) if length is not None else 1024 * 1024)
+        if not chunk:
+            if length is not None and total != length:
+                raise ValueError('Het uploaden is onderbroken. Probeer opnieuw.')
+            break
+        total += len(chunk)
+        if total > MAX_PLAYLIST:
+            raise PlaylistTooLarge()
+        destination.write(chunk)
+    destination.seek(0)
+    return total
+
+
+def fetch_playlist(url, directory=None):
     parsed = urlsplit(url)
     if parsed.scheme not in ('http', 'https') or not parsed.netloc:
         raise ValueError('Het M3U-adres moet een http- of https-adres zijn.')
+    temporary = tempfile.TemporaryFile(mode='w+b', dir=directory)
     try:
-        with urlopen(Request(url, headers={'User-Agent': 'MijnTV/0.1'}), timeout=45) as response:
+        with urlopen(Request(url, headers={'User-Agent': 'IPTV-thuis/0.1', 'Accept-Encoding': 'identity'}), timeout=90) as response:
             if urlsplit(response.geturl()).scheme not in ('http', 'https'):
                 raise ValueError('Ongeldige omleiding.')
-            content = response.read(MAX_PLAYLIST + 1)
+            size = response.headers.get('Content-Length')
+            if size and int(size) > MAX_PLAYLIST:
+                raise PlaylistTooLarge()
+            copy_playlist(response, temporary, int(size) if size else None)
+    except PlaylistTooLarge:
+        temporary.close()
+        raise
     except Exception:
+        temporary.close()
         raise ValueError('De M3U kon niet worden opgehaald. Controleer adres, inloggegevens en netwerk.') from None
-    if len(content) > MAX_PLAYLIST:
-        raise ValueError('De M3U is groter dan 64 MB.')
-    return content.decode('utf-8-sig', errors='replace')
+    return io.TextIOWrapper(temporary, encoding='utf-8-sig', errors='replace')
 
 
 class Store:
@@ -141,22 +183,39 @@ class Store:
             db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, value))
 
     def import_playlist(self, text, source=''):
-        rows = parse_m3u(text)  # Validate before touching the current catalog.
+        count = 0
+        def rows():
+            nonlocal count
+            for row in iter_m3u(text):
+                count += 1
+                yield row
         with self.import_lock, self.connect() as db:
+            # Streaming parsing and writes are in one transaction. Any parse,
+            # network or disk error rolls back to the original working catalog.
             db.execute('DELETE FROM channels WHERE manual=0')
-            db.executemany('INSERT INTO channels(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', rows)
+            db.executemany('INSERT INTO channels(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', rows())
             db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('source', source))
-        return len(rows)
+        return count
+
+    def import_url(self, source):
+        with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:
+            return self.import_playlist(text, source)
+
+    def import_file(self, stream, length):
+        with tempfile.TemporaryFile(mode='w+b', dir=os.path.dirname(self.path)) as temporary:
+            copy_playlist(stream, temporary, length)
+            with io.TextIOWrapper(temporary, encoding='utf-8-sig', errors='replace') as text:
+                return self.import_playlist(text)
 
     def refresh_source(self):
         source = self.setting('source')
         if not source:
             raise ValueError('Upload opnieuw een bestand of stel een M3U-adres in.')
-        text = fetch_playlist(source)
-        with self.import_lock:
-            if self.setting('source') != source:
-                raise ValueError('Het M3U-adres is ondertussen gewijzigd. De nieuwe instelling blijft behouden.')
-            return self.import_playlist(text, source)
+        with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:
+            with self.import_lock:
+                if self.setting('source') != source:
+                    raise ValueError('Het M3U-adres is ondertussen gewijzigd. De nieuwe instelling blijft behouden.')
+                return self.import_playlist(text, source)
 
     def catalog(self, search='', group='', offset=0, limit=100):
         where, args = ['1=1'], []

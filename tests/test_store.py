@@ -1,4 +1,5 @@
 import tempfile
+import io
 import time
 import unittest
 from unittest.mock import patch
@@ -82,9 +83,9 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.store.refresh_source()
         self.assertEqual(self.store.catalog()['total'], 2)
-        def replace_source(source):
+        def replace_source(source, directory=None):
             self.store.import_playlist(playlist('fresh'), 'https://example.test/new')
-            return playlist('outdated')
+            return io.StringIO(playlist('outdated'))
         with patch('mijntv.store.fetch_playlist', side_effect=replace_source):
             with self.assertRaises(ValueError):
                 self.store.refresh_source()

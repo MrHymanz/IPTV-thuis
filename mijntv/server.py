@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .store import MAX_PLAYLIST, fetch_playlist, xtream_playlist_url
+from .store import MAX_PLAYLIST, xtream_playlist_url
 
 
 def hash_password(password, salt):
@@ -108,31 +108,36 @@ class Handler(BaseHTTPRequestHandler):
         # A custom header and JSON force cross-origin browser requests to preflight;
         # no CORS permission is given. Origin check also protects cached Basic auth.
         origin = self.headers.get('Origin')
+        path = urlsplit(self.path).path
+        expected_type = 'application/octet-stream' if path == '/api/import/file' else 'application/json'
         if (self.headers.get('X-MijnTV') != '1' or
-                self.headers.get('Content-Type', '').split(';')[0] != 'application/json' or
+                self.headers.get('Content-Type', '').split(';')[0] != expected_type or
                 (origin and urlsplit(origin).netloc != self.headers.get('Host'))):
             self.reply(403, {'error': 'Open de beheerpagina op dit apparaat.'})
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= MAX_PLAYLIST * 2:
-                self.reply(413, {'error': 'Upload te groot (maximaal 64 MB M3U).'}); return
+            if not 0 < length <= (MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2):
+                self.reply(413, {'error': 'Upload te groot (maximaal 512 MB M3U).'}); return
+            if path == '/api/import/file':
+                self.reply(200, {'ok': True, 'imported': self.server.store.import_file(self.rfile, length)})
+                return
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError('Ongeldige aanvraag.')
-            store, path = self.server.store, urlsplit(self.path).path
+            store = self.server.store
             result = {'ok': True}
             if path == '/api/import/xtream':
                 source = xtream_playlist_url(data['server'], data['username'], data['password'])
-                result['imported'] = store.import_playlist(fetch_playlist(source), source)
+                result['imported'] = store.import_url(source)
             elif path == '/api/import':
                 if data.get('url'):
-                    text, source = fetch_playlist(data['url']), data['url']
+                    result['imported'] = store.import_url(data['url'])
                 else:
-                    text, source = data.get('text', ''), ''
-                if not isinstance(text, str) or len(text.encode()) > MAX_PLAYLIST:
-                    raise ValueError('Ongeldige of te grote M3U.')
-                result['imported'] = store.import_playlist(text, source)
+                    text = data.get('text', '')
+                    if not isinstance(text, str) or len(text.encode()) > MAX_PLAYLIST:
+                        raise ValueError('Ongeldige of te grote M3U.')
+                    result['imported'] = store.import_playlist(text)
             elif path == '/api/refresh':
                 result['imported'] = store.refresh_source()
             elif path == '/api/favorites/add':

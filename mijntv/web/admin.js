@@ -3,13 +3,14 @@ const $ = id => document.getElementById(id);
 let offset = 0, total = 0, favorites = [], busy = false, searchVersion = 0;
 function message(text, error = false) { $('message').textContent = text; $('message').className = error ? 'error' : ''; $('message').hidden = false; }
 async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json', 'X-MijnTV':'1'}, body:JSON.stringify(body)});
+  const file = body instanceof File;
+  const response = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':file ? 'application/octet-stream' : 'application/json', 'X-MijnTV':'1'}, body:file ? body : JSON.stringify(body)});
   const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Aanvraag mislukt.'); return result;
 }
 function button(label, action, secondary = true) { const b = document.createElement('button'); b.textContent = label; if (secondary) b.className = 'secondary'; b.onclick = action; return b; }
 function title(name, subtitle) { const wrap = document.createElement('div'); wrap.className = 'row-title'; const strong = document.createElement('strong'); strong.textContent = name; const small = document.createElement('small'); small.textContent = subtitle; wrap.append(strong, small); return wrap; }
 async function mutate(path, body, success) {
-  if (busy) return; busy = true; message('Bezig…');
+  if (busy) return; busy = true; message(path.startsWith('/api/import') || path === '/api/refresh' ? 'Zenderlijst ophalen en verwerken… Bij een grote lijst kan dit enkele minuten duren.' : 'Bezig…');
   try { const result = await api(path, body); if (result.imported) offset = 0; message(result.imported ? `${result.imported.toLocaleString('nl-NL')} zenders geïmporteerd.` : success); await load(); }
   catch (error) { message(error.message, true); } finally { busy = false; }
 }
@@ -45,7 +46,7 @@ async function load() {
   const selected = $('group').value; $('group').replaceChildren(new Option('Alle groepen', '')); groups.forEach(g => $('group').add(new Option(g || 'Zonder groep', g))); $('group').value = selected;
   renderFavorites(); await search();
 }
-$('file-form').onsubmit = async e => { e.preventDefault(); const file = $('file').files[0]; if (!file) return; if (file.size > 64*1024*1024) { message('Het bestand is groter dan 64 MB.', true); return; } await mutate('/api/import', {text:await file.text()}, 'Lijst geïmporteerd.'); $('file-form').reset(); };
+$('file-form').onsubmit = async e => { e.preventDefault(); const file = $('file').files[0]; if (!file || busy) return; if (file.size > 512*1024*1024) { message('Het bestand is groter dan 512 MB.', true); return; } await mutate('/api/import/file', file, 'Lijst geïmporteerd.'); $('file-form').reset(); };
 $('url-form').onsubmit = async e => { e.preventDefault(); const url = $('source').value.trim(); $('source').value = ''; await mutate('/api/import', {url}, 'Lijst geïmporteerd.'); };
 $('xtream-form').onsubmit = async e => {
   e.preventDefault();

@@ -100,7 +100,9 @@ De provider moet deze Xtream Codes-playlistmethode ondersteunen. De velden worde
 
 Zenderidentiteit wordt afgeleid van `tvg-id`, oorspronkelijke naam, groep en het volgnummer bij exacte duplicaten. Tijdelijke streamtokens tellen niet mee: een vernieuwde URL vervangt de bestaande favoriet. Als de aanbieder naam, groep of ID verandert, voeg je de nieuwe zender opnieuw toe en verwijder je de oude favoriet. Exact gelijk benoemde duplicaten worden op volgorde gekoppeld; onderscheidende namen/IDs zijn betrouwbaarder.
 
-Een ongeldige of mislukte import laat de oude lijst intact. De nieuwe catalogus wordt in één SQLite-transactie opgeslagen. Zoekresultaten worden per honderd opgehaald, zodat de beheerpagina niet 50.000 elementen tegelijk hoeft te tekenen. Handmatige streams blijven bij import bestaan.
+Playlists mogen maximaal **512 MB** zijn, zowel via een download als een bestandsupload. Downloads en uploads worden in blokken naar een tijdelijk bestand in de gegevensmap geschreven en vervolgens regel voor regel in SQLite verwerkt. De volledige playlist en zendercatalogus worden niet tegelijk in het geheugen geladen. Het tijdelijke bestand wordt ook bij fouten opgeruimd; zorg dat de gegevensmap voldoende vrije schijfruimte heeft voor de playlist en database.
+
+Een ongeldige, onderbroken of mislukte import laat de oude lijst intact. De nieuwe catalogus wordt in één SQLite-transactie opgeslagen. Zoekresultaten worden per honderd opgehaald, zodat de beheerpagina niet 50.000 elementen tegelijk hoeft te tekenen. Handmatige streams blijven bij import bestaan.
 
 ## Ontwikkelen en testen
 
