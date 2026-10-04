@@ -20,8 +20,8 @@ Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpag
 Gebruik Debian/Ubuntu met een lichte desktop, bijvoorbeeld XFCE, en een **X11/Xorg-sessie**. De speler wordt ingebed met een X11-venster-ID; native Wayland is niet het ondersteunde pad. Zie de [mpv-documentatie](https://mpv.io/manual/stable/#options-wid).
 
 ```sh
-git clone http://192.168.1.40:3000/administrator/TPTV-thuis.git
-cd TPTV-thuis
+git clone http://192.168.1.40:3000/administrator/IPTV-thuis.git
+cd IPTV-thuis
 sh tools/install-linux.sh
 ~/.local/bin/tptv-thuis
 ```
