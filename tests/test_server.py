@@ -46,10 +46,20 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status'):
+        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
+
+    def test_tv_preview_is_served_with_external_scripts(self):
+        for path in ('/tv', '/tv/', '/tv.js', '/tv.css'):
+            status, body = self.request('GET', path)
+            self.assertEqual(status, 200)
+            self.assertTrue(body)
+        html = self.request('GET', '/tv')[1]
+        self.assertIn(b'src="/tv.js"', html)
+        self.assertNotIn(b'<script>', html)
+        self.assertIn(b'href="/admin"', html)
 
     def test_cross_origin_and_missing_header_are_rejected(self):
         data = {'label':'Test', 'url':'https://example.test/secret'}

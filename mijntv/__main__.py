@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import os
+import signal
 from pathlib import Path
 import threading
 
@@ -48,6 +49,7 @@ def main():
     except (ValueError, OSError) as error:
         parser.error(str(error))
     stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=refresh_loop, args=(store, stop), daemon=True).start()
     print(f'Webbeheer: http://<IP-adres-van-deze-pc>:{args.port}/admin — gebruikersnaam admin', flush=True)

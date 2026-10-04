@@ -1,0 +1,5 @@
+*
+!mijntv/
+!mijntv/**
+mijntv/**/__pycache__/
+mijntv/**/*.pyc

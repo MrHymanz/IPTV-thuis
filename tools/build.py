@@ -5,7 +5,7 @@ import zipfile
 root = Path(__file__).resolve().parent.parent
 output = root / 'dist' / 'TPTV-thuis-0.1.0.zip'
 output.parent.mkdir(exist_ok=True)
-files = [root/'README.md', root/'pyproject.toml', root/'.gitignore', root/'index.html']
+files = [root/name for name in ('README.md', 'pyproject.toml', '.gitignore', 'index.html', 'Dockerfile', 'compose.yaml', '.dockerignore')]
 for directory in ('mijntv', 'tools', 'tests', 'docs'):
     files.extend(path for path in (root/directory).rglob('*')
                  if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc')

@@ -1,0 +1,32 @@
+name: iptv-thuis
+services:
+  app:
+    build: .
+    image: iptv-thuis:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${IPTV_BIND_ADDRESS:-0.0.0.0}:${IPTV_PORT:-8090}:8080"
+    volumes:
+      - tv-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: Europe/Amsterdam
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import http.client; c = http.client.HTTPConnection('127.0.0.1', 8080, timeout=3); c.request('GET', '/api/status'); assert c.getresponse().status == 401"
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+volumes:
+  tv-data:

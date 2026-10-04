@@ -91,9 +91,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, store.groups())
             elif parts.path == '/api/favorites':
                 self.reply(200, store.favorites())
-            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css'):
-                filename = {'/admin.js': 'admin.js', '/admin.css': 'admin.css'}.get(parts.path, 'admin.html')
-                mime = {'admin.html': 'text/html', 'admin.js': 'text/javascript', 'admin.css': 'text/css'}[filename]
+            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css'):
+                filename = {'/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
+                mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'}[Path(filename).suffix]
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:
                 self.reply(404, {'error': 'Niet gevonden.'})

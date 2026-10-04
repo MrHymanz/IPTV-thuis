@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TPTV thuis — tv-preview</title>
+  <link rel="stylesheet" href="/tv.css">
+</head>
+<body>
+  <main class="shell" id="home">
+    <header><div class="brand"><span class="tv-icon" aria-hidden="true"></span>TPTV thuis</div><time class="clock" id="clock"></time></header>
+    <h1>Kies een zender</h1>
+    <p class="intro">Je favoriete zenders. Selecteer een zender en druk op OK.</p>
+    <div class="grid" id="channels" aria-label="Favoriete zenders"></div>
+    <nav class="pagination" aria-label="Pagina's met zenders"><button class="page-button" id="previous">← Vorige</button><div><div class="page-label" id="page-label" aria-live="polite"></div><div class="dots" id="dots" aria-hidden="true"></div></div><button class="page-button" id="next">Volgende →</button></nav>
+    <footer><span class="hint"><kbd>← ↑ ↓ →</kbd> Kiezen</span><span class="hint"><kbd>OK</kbd> Kijken</span><span class="hint"><kbd>Terug</kbd> Zenderlijst</span></footer>
+    <p class="demo-note">Tv-preview met je eigen favorieten · geen live streams · <a href="/admin">Zenders beheren</a></p>
+  </main>
+  <section class="player" id="player" hidden role="dialog" aria-modal="true" aria-labelledby="player-title">
+    <div class="player-center"><div class="logo" id="player-logo"></div><h2 id="player-title"></h2><p>Dit is de tv-preview.<br>Pijltjes of CH+/CH−: direct naar de volgende zender.<br>In Docker test je hier de bediening; dit scherm speelt geen video af.</p></div>
+    <div class="player-bar"><div class="current" id="current"></div><button class="back" id="back">← Terug naar zenders</button></div>
+  </section>
+  <script src="/tv.js" defer></script>
+</body>
+</html>
