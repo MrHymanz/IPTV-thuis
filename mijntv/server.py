@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .store import MAX_PLAYLIST, xtream_playlist_url
+from .logos import LogoCache
 
 
 def hash_password(password, salt):
@@ -39,6 +40,7 @@ class AdminServer(ThreadingHTTPServer):
 
     def __init__(self, address, store, auth, web_directory):
         self.store, self.auth, self.web_directory = store, auth, Path(web_directory)
+        self.logos = LogoCache(Path(store.path).parent)
         super().__init__(address, Handler)
 
 
@@ -81,7 +83,16 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(parts.query)
         store = self.server.store
         try:
-            if parts.path == '/api/status':
+            if parts.path.startswith('/api/logos/'):
+                url = store.channel_logo(parts.path[len('/api/logos/'):])
+                if not url:
+                    self.reply(404, {'error': 'Geen zenderlogo.'}); return
+                try:
+                    data, mime = self.server.logos.get(url)
+                    self.reply(200, data, mime)
+                except ValueError:
+                    self.reply(404, {'error': 'Logo niet beschikbaar.'})
+            elif parts.path == '/api/status':
                 self.reply(200, {'channels': store.catalog(limit=0)['total'], 'favorites': len(store.favorites()),
                                  'has_source': bool(store.setting('source'))})
             elif parts.path == '/api/channels':

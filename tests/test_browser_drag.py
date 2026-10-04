@@ -2,6 +2,8 @@
 from pathlib import Path
 import tempfile
 import threading
+import struct
+import zlib
 import unittest
 
 try:
@@ -82,3 +84,21 @@ class BrowserDragTests(unittest.TestCase):
         self.assertEqual(len(self.saves),0)
         self.assertEqual([row['id'] for row in self.store.favorites()],self.ids)
         self.assertEqual(self.page.locator('.favorite-row').evaluate_all('(rows) => rows.map(r => r.dataset.id)'),self.ids)
+
+    def test_real_images_load_in_admin_and_tv_preview(self):
+        def chunk(kind,data):
+            return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+        png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR',struct.pack('>IIBBBBB',16,16,8,6,0,0,0)) +
+               chunk(b'IDAT',zlib.compress((b'\x00'+b'\xff\x00\x00\xff'*16)*16)) + chunk(b'IEND',b''))
+        with self.store.connect() as db:
+            db.execute('UPDATE channels SET logo=? WHERE id=?',('https://example.test/logo.png',self.ids[0]))
+        self.server.logos.get=lambda url: (png,'image/png')
+        self.page.reload()
+        self.page.locator('.favorite-logo').first.scroll_into_view_if_needed()
+        expect(self.page.locator('.favorite-logo.has-image img')).to_have_count(1)
+        self.assertEqual(self.page.locator('.favorite-logo img').first.evaluate('(image) => image.naturalWidth'),16)
+        self.page.goto(f'http://127.0.0.1:{self.server.server_port}/tv')
+        expect(self.page.locator('.channel .logo.has-image img')).to_have_count(1)
+        self.page.locator('.channel').first.click()
+        expect(self.page.locator('#player-logo.has-image img')).to_be_visible()
+        self.assertEqual(self.errors,[])

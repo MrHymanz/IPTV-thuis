@@ -2,6 +2,13 @@
 let favorites = [], selected = 0, watching = false, signature = '';
 const $ = id => document.getElementById(id);
 const grid = $('channels');
+function channelLogo(container, channel) {
+  container.replaceChildren(); container.textContent = 'TV'; container.classList.remove('has-image');
+  container.dataset.logo = channel.logo || '';
+  if (!channel.logo) return;
+  const image = document.createElement('img'); image.alt = ''; image.draggable = false; image.src = channel.logo;
+  image.onload = () => { if (container.dataset.logo === channel.logo) { container.replaceChildren(image); container.classList.add('has-image'); } };
+}
 function render(focus = false) {
   grid.replaceChildren();
   const page = Math.floor(selected / 10), pages = Math.max(1, Math.ceil(favorites.length / 10));
@@ -13,7 +20,7 @@ function render(focus = false) {
     const index = page * 10 + i, button = document.createElement('button');
     button.className = 'channel' + (selected === index ? ' selected' : '');
     const number = document.createElement('span'); number.className = 'number'; number.textContent = String(index + 1).padStart(2, '0');
-    const logo = document.createElement('span'); logo.className = 'logo'; logo.textContent = 'TV';
+    const logo = document.createElement('span'); logo.className = 'logo'; channelLogo(logo, channel);
     const label = document.createElement('span'); label.className = 'channel-name'; label.textContent = channel.label;
     button.setAttribute('aria-label', `${index + 1}. ${channel.label}${channel.available ? '' : ', niet beschikbaar'}`);
     button.append(number, logo, label);
@@ -35,7 +42,7 @@ function changePage(delta) {
 function openChannel() {
   const channel = favorites[selected]; if (!channel) return;
   watching = true; $('player-title').textContent = channel.label;
-  $('player-logo').textContent = channel.available ? 'TV' : 'Niet beschikbaar';
+  channelLogo($('player-logo'), channel);
   $('current').textContent = `${selected + 1} · ${channel.label}`;
   $('player').hidden = false; $('home').inert = true; $('back').focus();
 }

@@ -18,6 +18,16 @@ MAX_LINE = 1024 * 1024
 ATTR = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
 
 
+def logo_url(value):
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme in ('http', 'https') and parsed.hostname and len(value) <= 4096:
+            return value
+    except ValueError:
+        pass
+    return ''
+
+
 def xtream_playlist_url(server, username, password):
     """Build the standard Xtream M3U endpoint from separate login fields."""
     if any(not isinstance(value, str) or not value.strip() for value in (server, username, password)):
@@ -89,7 +99,7 @@ def iter_m3u(text):
             occurrences[identity] = occurrence + 1
             channel_id = hashlib.sha256((identity + ':' + str(occurrence)).encode()).hexdigest()[:32]
             count += 1
-            yield (channel_id, name, group, url, attributes.get('tvg-id', ''))
+            yield (channel_id, name, group, url, attributes.get('tvg-id', ''), logo_url(attributes.get('tvg-logo', '')))
     if not count:
         raise ValueError('Geen geldige zenders gevonden. Upload een uitgebreide M3U-lijst met EXTINF-regels.')
 
@@ -162,6 +172,8 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             ''')
+            if 'logo' not in {row[1] for row in db.execute('PRAGMA table_info(channels)')}:
+                db.execute("ALTER TABLE channels ADD COLUMN logo TEXT NOT NULL DEFAULT ''")
         os.chmod(self.path, 0o600)
 
     @contextmanager
@@ -195,17 +207,18 @@ class Store:
                 with self.connect() as db:
                     db.execute(f'''CREATE TABLE {staging} (
                         id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL,
-                        url TEXT NOT NULL, tvg_id TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0)''')
+                        url TEXT NOT NULL, tvg_id TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0,
+                        logo TEXT NOT NULL DEFAULT '')''')
                 batch = []
                 for row in iter_m3u(text):
                     batch.append(row)
                     count += 1
                     if len(batch) == 1000:
                         with self.connect() as db:
-                            db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', batch)
+                            db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id,logo) VALUES (?,?,?,?,?,?)', batch)
                         batch.clear()
                 with self.connect() as db:
-                    db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', batch)
+                    db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id,logo) VALUES (?,?,?,?,?,?)', batch)
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
@@ -258,9 +271,35 @@ class Store:
         with self.connect() as db:
             return [row[0] for row in db.execute('SELECT DISTINCT group_name FROM channels ORDER BY group_name')]
 
+    def channel_logo(self, channel_id):
+        with self.connect() as db:
+            row = db.execute('SELECT logo FROM channels WHERE id=?', (channel_id,)).fetchone()
+            return row[0] if row else ''
+
+    def backfill_favorite_logos(self):
+        """Enrich existing favorites without rebuilding the large channel catalog."""
+        source = self.setting('source')
+        if not source:
+            return 0
+        remaining = {item['id'] for item in self.favorites()}
+        found = []
+        with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:
+            for channel_id, name, group, url, tvg_id, logo in iter_m3u(text):
+                if channel_id in remaining:
+                    if logo:
+                        found.append((logo, channel_id))
+                    remaining.remove(channel_id)
+                    if not remaining:
+                        break
+        with self.import_lock, self.connect() as db:
+            if self.setting('source') != source:
+                raise ValueError('Het playlistadres is ondertussen gewijzigd.')
+            db.executemany('UPDATE channels SET logo=? WHERE id=?', found)
+        return len(found)
+
     def favorites(self, playback=False):
         with self.connect() as db:
-            rows = db.execute('''SELECT f.id,f.label,f.position,c.name,c.group_name,c.url
+            rows = db.execute('''SELECT f.id,f.label,f.position,c.name,c.group_name,c.url,c.logo
                                  FROM favorites f LEFT JOIN channels c ON f.id=c.id ORDER BY f.position''')
             result = []
             for row in rows:
@@ -268,6 +307,9 @@ class Store:
                 item['available'] = bool(item['url'])
                 if not playback:
                     del item['url']
+                    if item['logo']:
+                        version = hashlib.sha256(item['logo'].encode()).hexdigest()[:12]
+                        item['logo'] = '/api/logos/' + item['id'] + '?v=' + version
                 result.append(item)
             return result
 
@@ -310,7 +352,7 @@ class Store:
         label, url = self.label(label), stream_url(url)
         channel_id = 'manual-' + uuid.uuid4().hex
         with self.connect() as db:
-            db.execute('INSERT INTO channels VALUES (?,?,?,?,?,1)', (channel_id, label, 'Handmatig', url, ''))
+            db.execute('INSERT INTO channels(id,name,group_name,url,tvg_id,manual) VALUES (?,?,?,?,?,1)', (channel_id, label, 'Handmatig', url, ''))
             position = db.execute('SELECT COALESCE(MAX(position),-1)+1 FROM favorites').fetchone()[0]
             db.execute('INSERT INTO favorites VALUES (?,?,?)', (channel_id, label, position))
         return channel_id

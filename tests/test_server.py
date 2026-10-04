@@ -104,6 +104,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(upload(b'not a playlist')[0],400)
         self.assertEqual(self.store.catalog()['total'],1)
 
+    def test_favorite_logo_is_proxied_cached_and_auth_protected(self):
+        png=b'\x89PNG\r\n\x1a\n' + b'test-raster'
+        requests=[]
+        class Images(BaseHTTPRequestHandler):
+            def log_message(self,*args):
+                pass
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(200); self.send_header('Content-Length',str(len(png)))
+                self.end_headers(); self.wfile.write(png)
+        image_server=ThreadingHTTPServer(('127.0.0.1',0),Images)
+        threading.Thread(target=image_server.serve_forever,daemon=True).start()
+        try:
+            logo=f'http://127.0.0.1:{image_server.server_port}/logo.png?secret=provider-password'
+            self.store.import_playlist(f'#EXTM3U\n#EXTINF:-1 tvg-logo="{logo}",Test\nhttps://example.test/stream')
+            channel_id=self.store.catalog()['items'][0]['id']; self.store.add_favorite(channel_id)
+            favorite=json.loads(self.request('GET','/api/favorites')[1])[0]
+            self.assertNotIn('provider-password',json.dumps(favorite))
+            path=favorite['logo']
+            self.assertTrue(path.startswith('/api/logos/'))
+            self.assertEqual(self.request('GET',path,auth=False)[0],401)
+            self.assertEqual(self.request('GET',path),(200,png))
+            self.assertEqual(self.request('GET',path),(200,png))
+            self.assertEqual(len(requests),1)
+        finally:
+            image_server.shutdown(); image_server.server_close()
+
     def test_password_persisted_as_hash_and_not_plaintext(self):
         auth, generated = credentials(self.directory.name)
         self.assertIsNone(generated)

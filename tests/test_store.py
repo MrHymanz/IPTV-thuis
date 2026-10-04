@@ -150,6 +150,20 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([f['id'] for f in self.store.favorites()],ids[::-1])
         self.assertEqual(self.store.favorites()[1]['label'],'Nieuwe naam')
 
+    def test_logo_backfill_preserves_current_catalog_and_favorite_order(self):
+        self.store.import_playlist(playlist(),'https://example.test/list')
+        ids=[row['id'] for row in self.store.catalog()['items']]
+        for channel_id in ids: self.store.add_favorite(channel_id)
+        self.store.reorder(ids[::-1]); self.store.rename(ids[0],'Eigen naam')
+        text=playlist().replace('tvg-id="one"','tvg-id="one" tvg-logo="https://example.test/npo1.png"')
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(text)):
+            self.assertEqual(self.store.backfill_favorite_logos(),1)
+        self.assertEqual(self.store.catalog()['total'],2)
+        self.assertEqual([f['id'] for f in self.store.favorites()],ids[::-1])
+        self.assertEqual(self.store.favorites()[1]['label'],'Eigen naam')
+        self.assertEqual(self.store.channel_logo(ids[0]),'https://example.test/npo1.png')
+        self.assertIn('/api/logos/',self.store.favorites()[1]['logo'])
+
 
 if __name__ == '__main__':
     unittest.main()

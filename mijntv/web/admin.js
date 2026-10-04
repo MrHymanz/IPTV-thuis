@@ -36,12 +36,21 @@ function renderFavorites() {
     const handle = button('⠿', () => {}); handle.className = 'drag-handle';
     handle.setAttribute('aria-label', f.label + ' verslepen'); handle.title = 'Sleep om de volgorde te wijzigen';
     handle.addEventListener('pointerdown', e => startFavoriteDrag(e, row, handle));
+    const logo = document.createElement('span'); logo.className = 'favorite-logo';
+    logo.textContent = f.label.replace(/^(NL\||PRIME\|)\s*/i, '').slice(0, 2).toUpperCase();
+    if (f.logo) {
+      const image = document.createElement('img'); image.src = f.logo; image.alt = ''; image.loading = 'lazy'; image.draggable = false;
+      image.onload = () => { logo.replaceChildren(image); logo.classList.add('has-image'); };
+      image.onerror = () => image.remove();
+      // Lazy loading starts only once the image is in the document.
+      logo.append(image);
+    }
     const move = delta => { const ids = favorites.map(x => x.id); [ids[i],ids[i+delta]] = [ids[i+delta],ids[i]]; mutate('/api/favorites/order', {ids}, 'Volgorde opgeslagen.'); };
     const up = button('↑', () => move(-1)); up.setAttribute('aria-label', f.label + ' omhoog'); up.disabled = i === 0;
     const down = button('↓', () => move(1)); down.setAttribute('aria-label', f.label + ' omlaag'); down.disabled = i === favorites.length - 1;
     const rename = button('Naam', () => { const label = prompt('Naam op de televisie:', f.label); if (label !== null) mutate('/api/favorites/rename', {id:f.id, label}, 'Naam opgeslagen.'); });
     const remove = button('Verwijder', () => { if (confirm(`${f.label} uit de favorieten verwijderen?`)) mutate('/api/favorites/remove', {id:f.id}, 'Favoriet verwijderd.'); });
-    actions.append(up, down, rename, remove); row.append(handle, title(`${i+1}. ${f.label}`, f.available ? (f.name || 'Eigen stream') : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
+    actions.append(up, down, rename, remove); row.append(handle, logo, title(`${i+1}. ${f.label}`, f.available ? (f.name || 'Eigen stream') : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
   });
 }
 function startFavoriteDrag(event, row, handle) {

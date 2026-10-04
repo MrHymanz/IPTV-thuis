@@ -15,3 +15,4 @@
     @media(max-width:550px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.channel{height:145px}.intro{line-height:1.5}footer{flex-wrap:wrap}.player-bar{gap:12px}.current{font-size:18px}.player h2{font-size:32px}.player p{font-size:20px}}
   
 a{color:#ffda83}.logo{background:#3463b0;max-width:90%;overflow-wrap:anywhere}.empty{font-size:24px;color:#b6c7d4;grid-column:1/-1;padding:45px 0}
+.logo.has-image{background:#f4f6f8;width:130px;height:85px;padding:10px;letter-spacing:0}.logo img{max-width:100%;max-height:100%;object-fit:contain}.player .logo.has-image{width:200px;height:125px;padding:16px}
