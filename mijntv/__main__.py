@@ -23,8 +23,8 @@ def refresh_loop(store, stop):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='TPTV thuis — eenvoudige televisie met webbeheer')
-    parser.add_argument('--data-dir', default=str(Path.home()/'.local/share/tptv-thuis'))
+    parser = argparse.ArgumentParser(description='IPTV thuis — eenvoudige televisie met webbeheer')
+    parser.add_argument('--data-dir', default=str(Path.home()/'.local/share/iptv-thuis'))
     parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--admin-only', action='store_true', help='Alleen het webbeheer starten, zonder tv-scherm')

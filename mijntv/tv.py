@@ -14,7 +14,7 @@ class TV:
     def __init__(self, store, port, bootstrap=None, fullscreen=True):
         self.store, self.port, self.bootstrap = store, port, bootstrap
         self.root = tk.Tk()
-        self.root.title('TPTV thuis')
+        self.root.title('IPTV thuis')
         self.root.configure(bg=BG)
         if fullscreen:
             self.root.configure(cursor='none')
@@ -33,7 +33,7 @@ class TV:
         self.home.lift()
         header = tk.Frame(self.home, bg=BG)
         header.pack(fill='x', padx=60, pady=(35, 20))
-        self.label(header, '▣  TPTV thuis', 25, bold=True).pack(side='left')
+        self.label(header, '▣  IPTV thuis', 25, bold=True).pack(side='left')
         self.clock = self.label(header, '', 23, color=MUTED)
         self.clock.pack(side='right')
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)

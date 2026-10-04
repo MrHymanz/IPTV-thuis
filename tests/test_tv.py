@@ -54,9 +54,9 @@ class TVIntegration(unittest.TestCase):
                     self.assertFalse(tv.error.winfo_ismapped(), 'Geen foutmelding bij testvideo')
                 pump()
                 self.assertEqual(tv.page_label.cget('text'),'Pagina 1 van 3')
-                if os.environ.get('TPTV_SCREENSHOT'):
+                if os.environ.get('IPTV_SCREENSHOT'):
                     subprocess.run(['ffmpeg','-v','error','-f','x11grab','-video_size','1920x1080',
-                                    '-i',os.environ['DISPLAY'],'-frames:v','1','-y',os.environ['TPTV_SCREENSHOT']],check=True)
+                                    '-i',os.environ['DISPLAY'],'-frames:v','1','-y',os.environ['IPTV_SCREENSHOT']],check=True)
                 tv.key(SimpleNamespace(keysym='Next'))
                 self.assertEqual(tv.selected,10)
                 tv.key(SimpleNamespace(keysym='Return'))

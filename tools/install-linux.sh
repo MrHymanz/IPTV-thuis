@@ -11,7 +11,7 @@ if ! command -v apt-get >/dev/null 2>&1; then
     exit 1
 fi
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-install_dir="$HOME/.local/share/tptv-thuis-app"
+install_dir="$HOME/.local/share/iptv-thuis-app"
 if [ -e /etc/os-release ] && grep -qi libreelec /etc/os-release; then
     echo 'Deze zelfstandige versie vereist een Linux X11-desktop; LibreELEC wordt niet ondersteund.' >&2
     exit 1
@@ -22,7 +22,7 @@ mkdir -p "$install_dir" "$HOME/.local/bin" "$HOME/.config/autostart"
 if [ "$project_dir" != "$install_dir" ]; then
     cp -R "$project_dir/mijntv" "$install_dir/"
 fi
-python3 - "$install_dir" "$HOME/.local/bin/tptv-thuis" "$HOME/.config/autostart/tptv-thuis.desktop" <<'PY'
+python3 - "$install_dir" "$HOME/.local/bin/iptv-thuis" "$HOME/.config/autostart/iptv-thuis.desktop" <<'PY'
 import pathlib
 import shlex
 import sys
@@ -32,7 +32,7 @@ path.write_text('#!/bin/sh\ncd ' + shlex.quote(directory) + '\nexec /usr/bin/pyt
 path.chmod(0o755)
 # Desktop Entry Exec quoting differs from shell quoting.
 escaped = launcher.replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$')
-pathlib.Path(desktop).write_text('[Desktop Entry]\nType=Application\nName=TPTV thuis\nExec="' + escaped + '"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n')
+pathlib.Path(desktop).write_text('[Desktop Entry]\nType=Application\nName=IPTV thuis\nExec="' + escaped + '"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n')
 PY
 echo 'Geïnstalleerd. Kies bij aanmelden een X11/Xorg-sessie en stel automatisch aanmelden in.'
-echo "Start nu met: $HOME/.local/bin/tptv-thuis"
+echo "Start nu met: $HOME/.local/bin/iptv-thuis"

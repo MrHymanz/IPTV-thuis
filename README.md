@@ -1,4 +1,4 @@
-# TPTV thuis
+# IPTV thuis
 
 Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpagina. Ontworpen voor iemand die alleen wil kiezen, kijken en zappen, zonder Kodi-menu's.
 
@@ -38,7 +38,7 @@ Gebruik Debian/Ubuntu met een lichte desktop, bijvoorbeeld XFCE, en een **X11/Xo
 git clone http://192.168.1.40:3000/administrator/IPTV-thuis.git
 cd IPTV-thuis
 sh tools/install-linux.sh
-~/.local/bin/tptv-thuis
+~/.local/bin/iptv-thuis
 ```
 
 Het script installeert `python3-tk`, `mpv` en lettertypen met sudo, kopieert de app naar de gebruikersmap en maakt een desktop-autostart-item. Voer het uit als de tv-gebruiker. Stel **automatisch aanmelden** voor die gebruiker in via de desktopinstellingen. Schakel daar ook schermvergrendeling en automatisch slapen uit. Daarna opent de app bij het aanmelden op volledig scherm het zenderoverzicht. De app verandert geen aanmeldinstellingen of schijven.
@@ -68,7 +68,7 @@ Een USB 2,4GHz-ontvanger die zich als toetsenbord presenteert kan deze toetsen r
 
 ## Beheer en gegevens
 
-Er zijn geen externe Python-pakketten nodig. Standaard staat alle configuratie in `~/.local/share/tptv-thuis/`, buiten de repository:
+Er zijn geen externe Python-pakketten nodig. Standaard staat alle configuratie in `~/.local/share/iptv-thuis/`, buiten de repository:
 
 - `mijntv.db`: zenders, streamadressen, favorieten en het opgeslagen M3U-adres.
 - `admin.json`: gezouten PBKDF2-hash van het beheerwachtwoord.
@@ -79,7 +79,7 @@ Nieuwe gegevensbestanden zijn alleen toegankelijk voor de eigen gebruiker. Provi
 Wachtwoord wijzigen (sluit de app eerst met Ctrl+Q):
 
 ```sh
-~/.local/bin/tptv-thuis --reset-password
+~/.local/bin/iptv-thuis --reset-password
 ```
 
 Alleen webbeheer draaien, bijvoorbeeld voor ontwikkeling zonder beeldscherm:
@@ -107,6 +107,6 @@ python3 tools/build.py
 
 De optionele videoproef vereist X11 (of Xvfb), tkinter, mpv en ffmpeg; zonder die omgeving wordt alleen die proef overgeslagen. Een afbeelding van het geteste tv-scherm staat in `docs/tv-scherm.png`.
 
-Het bouwscript maakt `dist/TPTV-thuis-0.1.0.zip` met bronbestanden, documentatie, tests en de klikbare mockup. `index.html` is die mockup, geen browser-speler van de echte M3U. Hij ondersteunt ook direct zappen op het voorbeeldscherm.
+Het bouwscript maakt `dist/IPTV-thuis-0.1.0.zip` met bronbestanden, documentatie, tests en de klikbare mockup. `index.html` is die mockup, geen browser-speler van de echte M3U. Hij ondersteunt ook direct zappen op het voorbeeldscherm.
 
 Controleer voor dagelijks gebruik op de tv-pc: koude boot, HDMI-geluid, vijf echte streams, herhaald zappen, Terug, alle afstandsbedieningsknoppen, netwerkverlies en herstel, en beheer vanaf een tweede apparaat.

@@ -13,7 +13,7 @@ class Player:
     def __init__(self, window_id):
         self.events = queue.Queue()
         self.lock = threading.Lock()
-        self.directory = tempfile.TemporaryDirectory(prefix='tptv-')
+        self.directory = tempfile.TemporaryDirectory(prefix='iptv-')
         self.socket_path = os.path.join(self.directory.name, 'mpv.sock')
         self.process = subprocess.Popen([
             'mpv', '--no-config', '--idle=yes', '--keep-open=no', '--force-window=yes',
