@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+data/
+dist/
+*.db
+*.db-wal
+*.db-shm
+.env
+*.m3u
+*.m3u8
+credentials*

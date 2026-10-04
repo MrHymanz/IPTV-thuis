@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tptv-thuis"
+version = "0.1.0"
+description = "Eenvoudige Linux-tv met favorieten en lokaal M3U-webbeheer"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+tptv-thuis = "mijntv.__main__:main"
+
+[tool.setuptools]
+packages = ["mijntv"]
+
+[tool.setuptools.package-data]
+mijntv = ["web/*.html", "web/*.css", "web/*.js"]

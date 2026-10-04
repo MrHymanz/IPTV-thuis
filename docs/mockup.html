@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TPTV thuis — interactieve mockup</title>
+  <style>
+    :root{color-scheme:dark;font-family:Arial,Helvetica,sans-serif;background:#0c1722;color:#f5f7fa}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 70% 0%,#20394a 0,transparent 60%),#0c1722;min-height:100vh}
+    button{font:inherit;cursor:pointer}button:focus-visible{outline:4px solid #ffda83;outline-offset:5px}
+    .shell{max-width:1600px;margin:auto;padding:5vh 5vw 3vh}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4vh}
+    .brand{display:flex;align-items:center;gap:16px;font-size:27px;font-weight:bold}.tv-icon{border:3px solid #f5f7fa;width:39px;height:29px;border-radius:7px;display:inline-block;position:relative}.tv-icon:after{content:'';position:absolute;width:17px;height:3px;background:#f5f7fa;bottom:-9px;left:8px}
+    .clock{font-size:27px;color:#c7d2da;font-variant-numeric:tabular-nums}h1{font-size:clamp(32px,3vw,52px);margin:0 0 12px;letter-spacing:-1px}.intro{color:#b6c7d4;font-size:clamp(18px,1.6vw,25px);margin:0 0 4vh}
+    .grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:22px}.channel{background:#1c2c3a;border:3px solid #344656;border-radius:18px;min-height:180px;height:22vh;max-height:245px;color:white;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:19px;transition:background .12s,border-color .12s,transform .12s}
+    .channel.selected{background:#304a5a;border-color:#ffda83;box-shadow:0 0 0 3px #ffda8320;transform:translateY(-3px)}.number{position:absolute;top:13px;left:16px;color:#adbdc9;font-size:19px}.selected .number{color:#ffe4ad}
+    .logo{height:68px;min-width:75px;padding:0 13px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:var(--brand);font-size:35px;font-weight:900;letter-spacing:-2px;color:white}.channel-name{font-size:clamp(18px,1.6vw,25px);font-weight:bold;letter-spacing:0}.logo.small{font-size:25px;letter-spacing:-1px}.logo.dark-text{color:#152332}
+    .pagination{display:flex;align-items:center;justify-content:center;gap:26px;margin:30px 0}.page-button{background:#1c2c3a;border:1px solid #496071;color:#fff;border-radius:10px;padding:13px 22px;font-size:20px}.page-button:disabled{opacity:.3;cursor:default}.page-label{font-size:21px;color:#c7d2da;min-width:140px;text-align:center}.dots{display:flex;justify-content:center;gap:8px;margin-top:9px}.dot{width:7px;height:7px;background:#526677;border-radius:50%}.dot.active{background:#ffda83}
+    footer{display:flex;align-items:center;justify-content:center;gap:32px;border-top:1px solid #30414f;padding-top:24px;color:#c7d2da;font-size:20px}.hint{display:flex;align-items:center;gap:10px}kbd{font:inherit;font-weight:bold;color:#fff;border:1px solid #627585;background:#213342;border-radius:7px;padding:5px 10px}.demo-note{text-align:center;font-size:14px;color:#8a9eae;margin:23px 0 0}
+    .player{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 40%,#284a5e,#090f18 75%);z-index:5;display:flex;align-items:center;justify-content:center;text-align:center}.player[hidden]{display:none}.player-center{padding:30px}.player .logo{width:max-content;margin:0 auto 28px;height:100px;font-size:52px;padding:0 25px}.player h2{font-size:48px;margin:0 0 18px}.player p{color:#c1d0da;font-size:24px;line-height:1.5}.player-bar{position:absolute;bottom:0;left:0;right:0;padding:32px 5vw;display:flex;justify-content:space-between;align-items:center;background:#101e2ddd;text-align:left}.back{background:#ffda83;color:#152332;border:0;border-radius:12px;padding:17px 25px;font-weight:bold;font-size:23px}.current{font-size:24px;font-weight:bold}.current small{display:block;color:#b6c7d4;font-size:17px;font-weight:normal;margin-top:6px}
+    @media(max-width:850px){.shell{padding:25px 22px}.grid{gap:12px;grid-template-columns:repeat(5,minmax(0,1fr))}.channel{min-height:145px;height:22vh;gap:14px;border-radius:13px}.logo{min-width:50px;height:50px;font-size:25px;padding:0 8px}.logo.small{font-size:18px}.channel-name{font-size:16px}.number{font-size:14px;left:10px;top:9px}footer{font-size:16px;gap:14px}.pagination{gap:12px}.page-button{font-size:16px;padding:12px}.brand,.clock{font-size:22px}}
+    @media(max-width:550px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.channel{height:145px}.intro{line-height:1.5}footer{flex-wrap:wrap}.player-bar{gap:12px}.current{font-size:18px}.player h2{font-size:32px}.player p{font-size:20px}}
+  </style>
+</head>
+<body>
+  <main class="shell" id="home">
+    <header><div class="brand"><span class="tv-icon" aria-hidden="true"></span>TPTV thuis</div><time class="clock" id="clock"></time></header>
+    <h1>Kies een zender</h1>
+    <p class="intro">Je favoriete zenders. Selecteer een zender en druk op OK.</p>
+    <div class="grid" id="channels" aria-label="Favoriete zenders"></div>
+    <nav class="pagination" aria-label="Pagina's met zenders"><button class="page-button" id="previous">← Vorige</button><div><div class="page-label" id="page-label" aria-live="polite"></div><div class="dots" id="dots" aria-hidden="true"></div></div><button class="page-button" id="next">Volgende →</button></nav>
+    <footer><span class="hint"><kbd>← ↑ ↓ →</kbd> Kiezen</span><span class="hint"><kbd>OK</kbd> Kijken</span><span class="hint"><kbd>Terug</kbd> Zenderlijst</span></footer>
+    <p class="demo-note">Interactieve mockup · voorbeeldzenders · geen live streams</p>
+  </main>
+  <section class="player" id="player" hidden role="dialog" aria-modal="true" aria-labelledby="player-title">
+    <div class="player-center"><div class="logo" id="player-logo"></div><h2 id="player-title"></h2><p>Hier verschijnt de live uitzending.<br>Pijltjes of CH+/CH−: direct naar de volgende zender.<br>Dit is een voorbeeldscherm zonder live stream.</p></div>
+    <div class="player-bar"><div class="current" id="current"></div><button class="back" id="back">← Terug naar zenders</button></div>
+  </section>
+  <script>
+    const favorites=[
+      ['NPO 1','npo 1','#ef492b'],['NPO 2','npo 2','#7855bd'],['NPO 3','npo 3','#20a95d'],['RTL 4','RTL 4','#eb9b24'],['RTL 5','RTL 5','#d6423e'],
+      ['SBS 6','6','#267cbd'],['RTL 7','RTL 7','#cfaa27'],['RTL 8','RTL 8','#b3326b'],['Net5','NET5','#dbb47d'],['Veronica','VERONICA','#2579b7'],
+      ['NPO Nieuws','npo','#ef492b'],['NPO Politiek','npo','#7855bd'],['RTL Z','RTL Z','#2374a0'],['NOS Live','NOS','#d33836'],['BBC One','BBC 1','#be2634'],
+      ['BBC Two','BBC 2','#298b88'],['BBC News','BBC','#be2634'],['CNN','CNN','#cc222a'],['Discovery','D','#287eb6'],['National Geographic','NAT GEO','#c4a127'],
+      ['Animal Planet','animal','#2d9771'],['Eurosport 1','EURO 1','#3463b0'],['Eurosport 2','EURO 2','#3463b0'],['ESPN 1','ESPN','#c9363e'],['Ziggo Sport','ZIGGO','#db771a'],
+      ['24Kitchen','24','#b74937'],['History','H','#a38a45'],['MTV','MTV','#6b49b6'],['Nickelodeon','nick','#e86f19'],['Cartoon Network','CN','#475766']
+    ];
+    let page=0,selected=0,watching=false;
+    const grid=document.getElementById('channels'),player=document.getElementById('player');
+    function render(focus=false){
+      grid.replaceChildren();
+      favorites.slice(page*10,page*10+10).forEach(([name,logo,color],i)=>{
+        const button=document.createElement('button');button.className='channel'+(i===selected?' selected':'');button.setAttribute('aria-label',`${page*10+i+1}. ${name}, kijken`);
+        const number=document.createElement('span');number.className='number';number.textContent=String(page*10+i+1).padStart(2,'0');
+        const mark=document.createElement('span');mark.className='logo'+(logo.length>5?' small':'');mark.style.setProperty('--brand',color);mark.textContent=logo;
+        const label=document.createElement('span');label.className='channel-name';label.textContent=name;button.append(number,mark,label);
+        button.addEventListener('focus',()=>{selected=i;grid.querySelectorAll('.channel').forEach((b,j)=>b.classList.toggle('selected',i===j));});
+        button.addEventListener('click',()=>{selected=i;openChannel();});grid.append(button);
+      });
+      document.getElementById('page-label').textContent=`Pagina ${page+1} van 3`;
+      document.getElementById('dots').innerHTML=[0,1,2].map(i=>`<span class="dot ${page===i?'active':''}"></span>`).join('');
+      document.getElementById('previous').disabled=page===0;document.getElementById('next').disabled=page===2;
+      if(focus)grid.children[selected].focus();
+    }
+    function changePage(delta){page=Math.max(0,Math.min(2,page+delta));render(true);}
+    function openChannel(){const [name,logo,color]=favorites[page*10+selected];watching=true;document.getElementById('player-title').textContent=name;const mark=document.getElementById('player-logo');mark.textContent=logo;mark.style.setProperty('--brand',color);document.getElementById('current').textContent=`${page*10+selected+1} · ${name}`;const small=document.createElement('small');small.textContent='Voorbeeld van het kijk scherm';document.getElementById('current').append(small);player.hidden=false;document.getElementById('home').inert=true;document.getElementById('back').focus();}
+    function closeChannel(){watching=false;player.hidden=true;document.getElementById('home').inert=false;render(true);}
+    document.getElementById('previous').onclick=()=>changePage(-1);document.getElementById('next').onclick=()=>changePage(1);document.getElementById('back').onclick=closeChannel;
+    document.addEventListener('keydown',e=>{
+      if(['Escape','Backspace','BrowserBack'].includes(e.key)){e.preventDefault();if(watching)closeChannel();return;}
+      if(watching){
+        const delta=['ArrowRight','ArrowUp','PageDown'].includes(e.key)?1:['ArrowLeft','ArrowDown','PageUp'].includes(e.key)?-1:0;
+        if(delta){e.preventDefault();const index=(page*10+selected+delta+favorites.length)%favorites.length;page=Math.floor(index/10);selected=index%10;openChannel();}
+        return;
+      }
+      if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','PageUp','PageDown','Enter'].includes(e.key))return;
+      if(e.key==='Enter'){if(document.activeElement===document.getElementById('previous')||document.activeElement===document.getElementById('next'))return;e.preventDefault();openChannel();return;}
+      e.preventDefault();
+      if(e.key==='PageUp'){changePage(-1);return;}if(e.key==='PageDown'){changePage(1);return;}
+      if(e.key==='ArrowRight'){if(selected===9&&page<2){page++;selected=0;}else selected=Math.min(9,selected+1);}
+      if(e.key==='ArrowLeft'){if(selected===0&&page>0){page--;selected=9;}else selected=Math.max(0,selected-1);}
+      if(e.key==='ArrowDown'){if(selected<5)selected+=5;else if(page<2){page++;selected-=5;}}
+      if(e.key==='ArrowUp'){if(selected>=5)selected-=5;else if(page>0){page--;selected+=5;}}
+      render(true);
+    });
+    function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'});}tick();setInterval(tick,10000);render(true);
+  </script>
+</body>
+</html>
