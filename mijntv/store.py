@@ -7,11 +7,32 @@ import sqlite3
 import uuid
 import threading
 from contextlib import contextmanager
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 MAX_PLAYLIST = 64 * 1024 * 1024
 ATTR = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
+
+
+def xtream_playlist_url(server, username, password):
+    """Build the standard Xtream M3U endpoint from separate login fields."""
+    if any(not isinstance(value, str) or not value.strip() for value in (server, username, password)):
+        raise ValueError('Vul het serveradres, de gebruikersnaam en het wachtwoord in.')
+    if any(len(value) > 4096 or '\r' in value or '\n' in value for value in (server, username, password)):
+        raise ValueError('Ongeldige IPTV-inloggegevens.')
+    try:
+        parsed = urlsplit(server.strip())
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname or
+                parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
+            raise ValueError()
+        parsed.port  # Reject malformed port numbers without exposing input.
+    except ValueError:
+        raise ValueError('Geef alleen het http- of https-serveradres op, zonder inloggegevens of queryparameters.') from None
+    path = parsed.path.rstrip('/')
+    if path.endswith(('/get.php', '/player_api.php')):
+        path = path.rsplit('/', 1)[0]
+    query = urlencode({'username': username, 'password': password, 'type': 'm3u_plus', 'output': 'ts'})
+    return urlunsplit((parsed.scheme, parsed.netloc, path + '/get.php', query, ''))
 
 
 def stream_url(value):

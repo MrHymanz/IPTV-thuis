@@ -47,6 +47,13 @@ async function load() {
 }
 $('file-form').onsubmit = async e => { e.preventDefault(); const file = $('file').files[0]; if (!file) return; if (file.size > 64*1024*1024) { message('Het bestand is groter dan 64 MB.', true); return; } await mutate('/api/import', {text:await file.text()}, 'Lijst geïmporteerd.'); $('file-form').reset(); };
 $('url-form').onsubmit = async e => { e.preventDefault(); const url = $('source').value.trim(); $('source').value = ''; await mutate('/api/import', {url}, 'Lijst geïmporteerd.'); };
+$('xtream-form').onsubmit = async e => {
+  e.preventDefault();
+  if (busy) return;
+  const body = {server:$('xtream-server').value.trim(), username:$('xtream-user').value, password:$('xtream-password').value};
+  $('xtream-password').value = '';
+  await mutate('/api/import/xtream', body, 'Zenders opgehaald.');
+};
 $('refresh').onclick = () => mutate('/api/refresh', {}, 'Lijst vernieuwd.');
 $('manual-form').onsubmit = async e => { e.preventDefault(); const body = {label:$('manual-name').value, url:$('manual-url').value}; $('manual-url').value = ''; await mutate('/api/favorites/manual', body, 'Eigen zender toegevoegd.'); };
 $('search-form').onsubmit = e => { e.preventDefault(); offset = 0; search().catch(e => message(e.message,true)); };

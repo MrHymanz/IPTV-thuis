@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .store import MAX_PLAYLIST, fetch_playlist
+from .store import MAX_PLAYLIST, fetch_playlist, xtream_playlist_url
 
 
 def hash_password(password, salt):
@@ -122,7 +122,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Ongeldige aanvraag.')
             store, path = self.server.store, urlsplit(self.path).path
             result = {'ok': True}
-            if path == '/api/import':
+            if path == '/api/import/xtream':
+                source = xtream_playlist_url(data['server'], data['username'], data['password'])
+                result['imported'] = store.import_playlist(fetch_playlist(source), source)
+            elif path == '/api/import':
                 if data.get('url'):
                     text, source = fetch_playlist(data['url']), data['url']
                 else:

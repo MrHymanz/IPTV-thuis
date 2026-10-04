@@ -1,10 +1,13 @@
 import base64
 from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from mijntv.server import AdminServer, credentials
 from mijntv.store import Store
@@ -91,6 +94,52 @@ class ServerTests(unittest.TestCase):
         self.assertIsNone(generated)
         self.assertEqual(auth, self.auth)
         self.assertNotIn('test-password', Path(self.directory.name, 'admin.json').read_text())
+
+    def test_xtream_import_and_refresh_through_real_provider_endpoint(self):
+        requests = []
+        class Provider(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                requests.append(self.path)
+                body = ('#EXTM3U\n#EXTINF:-1 tvg-id="1",Test\nhttps://example.test/stream/' + str(len(requests))).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        provider = ThreadingHTTPServer(('127.0.0.1',0),Provider)
+        thread = threading.Thread(target=provider.serve_forever,daemon=True)
+        thread.start()
+        try:
+            body = {'server':f'http://127.0.0.1:{provider.server_port}', 'username':'name+&é', 'password':'secret?#&+'}
+            status, result = self.request('POST','/api/import/xtream',body)
+            self.assertEqual(status,200)
+            self.assertEqual(json.loads(result)['imported'],1)
+            self.assertEqual(urlsplit(requests[0]).path,'/get.php')
+            self.assertEqual(parse_qs(urlsplit(requests[0]).query)['password'],['secret?#&+'])
+            channel_id = self.store.catalog()['items'][0]['id']
+            self.store.add_favorite(channel_id)
+            self.store.rename(channel_id,'Eigen naam')
+            self.assertEqual(self.request('POST','/api/refresh',{})[0],200)
+            self.assertEqual(len(requests),2)
+            self.assertEqual(self.store.favorites(playback=True)[0]['url'],'https://example.test/stream/2')
+            self.assertEqual(self.store.favorites()[0]['label'],'Eigen naam')
+            for path in ('/api/status','/api/channels','/api/favorites'):
+                self.assertNotIn(b'secret',self.request('GET',path)[1])
+        finally:
+            provider.shutdown()
+            provider.server_close()
+            thread.join()
+
+    def test_invalid_xtream_login_does_not_fetch_or_replace_existing_catalog(self):
+        self.store.manual('Bestaand','https://example.test/stream')
+        with patch('mijntv.server.fetch_playlist') as fetch:
+            for body in ({'server':'file:///secret','username':'user','password':'secret'},
+                         {'server':'https://example.test','username':'user'},
+                         {'server':'https://example.test','username':'user','password':''}):
+                self.assertEqual(self.request('POST','/api/import/xtream',body)[0],400)
+            fetch.assert_not_called()
+        self.assertEqual(self.store.catalog()['total'],1)
 
 
 if __name__ == '__main__':

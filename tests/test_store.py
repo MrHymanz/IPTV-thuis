@@ -3,7 +3,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from mijntv.store import Store, parse_m3u
+from mijntv.store import Store, parse_m3u, xtream_playlist_url
+from urllib.parse import parse_qs, urlsplit
 
 
 def playlist(token='old'):
@@ -89,6 +90,25 @@ class StoreTests(unittest.TestCase):
                 self.store.refresh_source()
         self.assertEqual(self.store.setting('source'), 'https://example.test/new')
         self.assertIn('/fresh/', self.store.favorites(playback=True)[0]['url'])
+
+    def test_xtream_special_characters_and_server_paths(self):
+        for base in ('https://example.test:8443/portal/', 'https://example.test:8443/portal/get.php',
+                     'https://example.test:8443/portal/player_api.php'):
+            parsed = urlsplit(xtream_playlist_url(base, 'user+&é', ' pass?#&+ '))
+            self.assertEqual(parsed.path, '/portal/get.php')
+            self.assertEqual(parse_qs(parsed.query), {'username':['user+&é'], 'password':[' pass?#&+ '],
+                                                     'type':['m3u_plus'], 'output':['ts']})
+
+    def test_xtream_rejects_invalid_input_without_exposing_secrets(self):
+        for base in ('file:///etc/passwd', 'https://user:secret@example.test',
+                     'https://example.test?password=secret', 'https://example.test:bad', 'https://[bad'):
+            with self.assertRaises(ValueError) as error:
+                xtream_playlist_url(base, 'user', 'secret')
+            self.assertNotIn('secret', str(error.exception))
+        for values in (('https://example.test','','secret'),('https://example.test','user',''),
+                       ('https://example.test','user',None)):
+            with self.assertRaises(ValueError):
+                xtream_playlist_url(*values)
 
 
 if __name__ == '__main__':
