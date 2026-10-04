@@ -12,7 +12,7 @@ function title(name, subtitle) { const wrap = document.createElement('div'); wra
 async function mutate(path, body, success) {
   if (busy) return; busy = true; message(path.startsWith('/api/import') || path === '/api/refresh' ? 'Zenderlijst ophalen en verwerken… Bij een grote lijst kan dit enkele minuten duren.' : 'Bezig…');
   try { const result = await api(path, body); if (result.imported) offset = 0; message(result.imported ? `${result.imported.toLocaleString('nl-NL')} zenders geïmporteerd.` : success); await load(); }
-  catch (error) { message(error.message, true); } finally { busy = false; }
+  catch (error) { if (path === '/api/favorites/order') renderFavorites(); message(error.message, true); } finally { busy = false; }
 }
 async function search() {
   const version = ++searchVersion;
@@ -31,14 +31,63 @@ function renderFavorites() {
   $('favorites').replaceChildren();
   if (!favorites.length) { const p = document.createElement('p'); p.textContent = 'Nog geen favorieten. Zoek links een zender en klik op Toevoegen.'; $('favorites').append(p); }
   favorites.forEach((f, i) => {
-    const row = document.createElement('div'); row.className = 'row'; const actions = document.createElement('div'); actions.className = 'actions';
+    const row = document.createElement('div'); row.className = 'row favorite-row'; row.dataset.id = f.id; row.dataset.label = f.label;
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const handle = button('⠿', () => {}); handle.className = 'drag-handle';
+    handle.setAttribute('aria-label', f.label + ' verslepen'); handle.title = 'Sleep om de volgorde te wijzigen';
+    handle.addEventListener('pointerdown', e => startFavoriteDrag(e, row, handle));
     const move = delta => { const ids = favorites.map(x => x.id); [ids[i],ids[i+delta]] = [ids[i+delta],ids[i]]; mutate('/api/favorites/order', {ids}, 'Volgorde opgeslagen.'); };
     const up = button('↑', () => move(-1)); up.setAttribute('aria-label', f.label + ' omhoog'); up.disabled = i === 0;
     const down = button('↓', () => move(1)); down.setAttribute('aria-label', f.label + ' omlaag'); down.disabled = i === favorites.length - 1;
     const rename = button('Naam', () => { const label = prompt('Naam op de televisie:', f.label); if (label !== null) mutate('/api/favorites/rename', {id:f.id, label}, 'Naam opgeslagen.'); });
     const remove = button('Verwijder', () => { if (confirm(`${f.label} uit de favorieten verwijderen?`)) mutate('/api/favorites/remove', {id:f.id}, 'Favoriet verwijderd.'); });
-    actions.append(up, down, rename, remove); row.append(title(`${i+1}. ${f.label}`, f.available ? (f.name || 'Eigen stream') : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
+    actions.append(up, down, rename, remove); row.append(handle, title(`${i+1}. ${f.label}`, f.available ? (f.name || 'Eigen stream') : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
   });
+}
+function startFavoriteDrag(event, row, handle) {
+  if (busy || !event.isPrimary || event.button !== 0) return;
+  event.preventDefault(); busy = true;
+  const list = $('favorites'), original = Array.from(list.children, r => r.dataset.id);
+  const startY = event.clientY, pointer = event.pointerId;
+  let y = startY, moved = false, frame;
+  handle.setPointerCapture(pointer);
+  function position() {
+    if (!moved) return;
+    const target = Array.from(list.children).find(r => r !== row && y < r.getBoundingClientRect().top + r.getBoundingClientRect().height / 2);
+    list.insertBefore(row, target || null);
+    Array.from(list.children).forEach((r, i) => { r.querySelector('.row-title strong').textContent = `${i + 1}. ${r.dataset.label}`; });
+  }
+  function scroll() {
+    if (moved) {
+      const edge = 90;
+      const delta = y < edge ? -Math.min(18, (edge - y) / 4) : y > window.innerHeight - edge ? Math.min(18, (y - window.innerHeight + edge) / 4) : 0;
+      if (delta) { window.scrollBy(0, delta); position(); }
+    }
+    frame = requestAnimationFrame(scroll);
+  }
+  function move(e) {
+    if (e.pointerId !== pointer) return;
+    y = e.clientY;
+    if (!moved && Math.abs(y - startY) >= 6) { moved = true; row.classList.add('dragging'); }
+    position();
+  }
+  function finish(e, cancel = false) {
+    if (e && e.pointerId !== undefined && e.pointerId !== pointer) return;
+    cancelAnimationFrame(frame); busy = false; row.classList.remove('dragging');
+    handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up);
+    handle.removeEventListener('pointercancel', abort); handle.removeEventListener('lostpointercapture', abort);
+    document.removeEventListener('keydown', escape);
+    if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
+    const ids = Array.from(list.children, r => r.dataset.id);
+    if (cancel) { renderFavorites(); return; }
+    if (ids.some((id, i) => id !== original[i])) mutate('/api/favorites/order', {ids}, 'Volgorde opgeslagen.');
+  }
+  const up = e => finish(e);
+  const abort = e => finish(e, true);
+  const escape = e => { if (e.key === 'Escape') { e.preventDefault(); finish(null, true); } };
+  handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up);
+  handle.addEventListener('pointercancel', abort); handle.addEventListener('lostpointercapture', abort);
+  document.addEventListener('keydown', escape); frame = requestAnimationFrame(scroll);
 }
 async function load() {
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);

@@ -10,7 +10,7 @@ Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpag
 - Streams spelen met mpv binnen hetzelfde venster.
 - Pijltjes of CH+/CH− zappen direct door de favorieten tijdens de uitzending. Na de laatste volgt de eerste.
 - Terug opent de zenderlijst. OK tijdens het kijken toont kort de zendernaam.
-- Webbeheer op `http://IP-VAN-TV-PC:8080/admin`: Losse Xtream Codes-inloggegevens gebruiken, M3U uploaden of via een adres ophalen, zoeken, groepen filteren, favorieten toevoegen, verwijderen, hernoemen en ordenen, eigen stream toevoegen.
+- Webbeheer op `http://IP-VAN-TV-PC:8080/admin`: Losse Xtream Codes-inloggegevens gebruiken, M3U uploaden of via een adres ophalen, zoeken, groepen filteren, favorieten toevoegen, verwijderen, hernoemen en ordenen door te slepen, eigen stream toevoegen.
 - Een opgeslagen M3U-adres wordt bij het starten en elke zes uur vernieuwd zolang de app draait. Een bestandsupload vervang je door opnieuw te uploaden.
 - Eigen namen en volgorde blijven bewaard bij import. Verdwenen zenders blijven als niet beschikbaar zichtbaar en worden bij zappen overgeslagen.
 - Standaard uitgebreide M3U-lijsten met `#EXTINF`, HTTP(S), RTSP, RTMP en UDP. Kodi-stijl HTTP-headers na `|` worden doorgegeven aan mpv. DRM, aanbieder-specifieke loginflows, catch-up en EPG zijn niet geïmplementeerd.
