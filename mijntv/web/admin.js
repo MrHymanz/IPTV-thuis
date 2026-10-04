@@ -50,11 +50,13 @@ function startFavoriteDrag(event, row, handle) {
   const list = $('favorites'), original = Array.from(list.children, r => r.dataset.id);
   const startY = event.clientY, pointer = event.pointerId;
   let y = startY, moved = false, frame;
-  handle.setPointerCapture(pointer);
+  // Capture on the stationary list. Capturing the handle loses the pointer
+  // when insertBefore moves its row, which cancels a held drag in browsers.
+  list.setPointerCapture(pointer);
   function position() {
     if (!moved) return;
     const target = Array.from(list.children).find(r => r !== row && y < r.getBoundingClientRect().top + r.getBoundingClientRect().height / 2);
-    list.insertBefore(row, target || null);
+    if (row.nextElementSibling !== (target || null)) list.insertBefore(row, target || null);
     Array.from(list.children).forEach((r, i) => { r.querySelector('.row-title strong').textContent = `${i + 1}. ${r.dataset.label}`; });
   }
   function scroll() {
@@ -74,10 +76,10 @@ function startFavoriteDrag(event, row, handle) {
   function finish(e, cancel = false) {
     if (e && e.pointerId !== undefined && e.pointerId !== pointer) return;
     cancelAnimationFrame(frame); busy = false; row.classList.remove('dragging');
-    handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up);
-    handle.removeEventListener('pointercancel', abort); handle.removeEventListener('lostpointercapture', abort);
+    list.removeEventListener('pointermove', move); list.removeEventListener('pointerup', up);
+    list.removeEventListener('pointercancel', abort); list.removeEventListener('lostpointercapture', abort);
     document.removeEventListener('keydown', escape);
-    if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
+    if (list.hasPointerCapture(pointer)) list.releasePointerCapture(pointer);
     const ids = Array.from(list.children, r => r.dataset.id);
     if (cancel) { renderFavorites(); return; }
     if (ids.some((id, i) => id !== original[i])) mutate('/api/favorites/order', {ids}, 'Volgorde opgeslagen.');
@@ -85,8 +87,8 @@ function startFavoriteDrag(event, row, handle) {
   const up = e => finish(e);
   const abort = e => finish(e, true);
   const escape = e => { if (e.key === 'Escape') { e.preventDefault(); finish(null, true); } };
-  handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up);
-  handle.addEventListener('pointercancel', abort); handle.addEventListener('lostpointercapture', abort);
+  list.addEventListener('pointermove', move); list.addEventListener('pointerup', up);
+  list.addEventListener('pointercancel', abort); list.addEventListener('lostpointercapture', abort);
   document.addEventListener('keydown', escape); frame = requestAnimationFrame(scroll);
 }
 async function load() {
