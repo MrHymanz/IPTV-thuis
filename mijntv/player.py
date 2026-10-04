@@ -15,13 +15,16 @@ class Player:
         self.lock = threading.Lock()
         self.directory = tempfile.TemporaryDirectory(prefix='iptv-')
         self.socket_path = os.path.join(self.directory.name, 'mpv.sock')
+        audio = []
+        if os.environ.get('IPTV_AUDIO_DEVICE'):
+            audio = ['--ao=alsa', '--audio-device=' + os.environ['IPTV_AUDIO_DEVICE']]
         self.process = subprocess.Popen([
             'mpv', '--no-config', '--idle=yes', '--keep-open=no', '--force-window=yes',
             '--wid=' + str(window_id), '--input-ipc-server=' + self.socket_path,
             '--input-default-bindings=no', '--input-vo-keyboard=no', '--input-terminal=no',
             '--osc=no', '--osd-level=0', '--cursor-autohide=always', '--terminal=no',
             '--cache=yes', '--demuxer-max-bytes=64MiB', '--vo=gpu,x11', '--hwdec=auto-safe',
-        ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ] + audio, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.connection = None
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline and self.process.poll() is None:

@@ -53,6 +53,15 @@ def main():
         server = AdminServer((args.host, args.port), store, auth, Path(__file__).parent/'web')
     except (ValueError, OSError) as error:
         parser.error(str(error))
+    tv = None
+    if not args.admin_only:
+        try:
+            from .tv import TV
+            tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed)
+            # Complete the initial Tk mapping before starting background workers.
+            tv.root.update()
+        except ImportError:
+            parser.error('Installeer python3-tk voor het tv-scherm, of gebruik --admin-only.')
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -65,11 +74,7 @@ def main():
             while not stop.wait(1):
                 pass
         else:
-            try:
-                from .tv import TV
-                TV(store, args.port, bootstrap, fullscreen=not args.windowed).run()
-            except ImportError:
-                parser.error('Installeer python3-tk voor het tv-scherm, of gebruik --admin-only.')
+            tv.run()
     except KeyboardInterrupt:
         pass
     finally:

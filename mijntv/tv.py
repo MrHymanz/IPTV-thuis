@@ -21,7 +21,8 @@ class TV:
         self.root.geometry(f'{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}' if fullscreen else '1280x720')
         self.root.attributes('-fullscreen', fullscreen)
         self.root.update_idletasks()
-        self.scale = max(.65, self.root.winfo_height() / 900)
+        screen_height = self.root.winfo_screenheight() if fullscreen else self.root.winfo_height()
+        self.scale = max(.65, screen_height / 900)
         self.channels, self.selected, self.page = [], 0, 0
         self.watching, self.player, self.pending_zap = False, None, None
         self.message_until = 0
@@ -75,6 +76,13 @@ class TV:
         self.refresh()
         self.tick()
         self.root.after(100, self.poll_player)
+        self.root.after(200, self.present)
+
+    def present(self):
+        # Map and focus after the window manager has processed the first layout.
+        self.root.deiconify()
+        self.root.lift()
+        self.root.update_idletasks()
         self.root.focus_force()
 
     def label(self, parent, text, size, color=WHITE, bold=False):

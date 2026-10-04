@@ -3,3 +3,6 @@
 !mijntv/**
 mijntv/**/__pycache__/
 mijntv/**/*.pyc
+!deploy/
+!deploy/libreelec/
+!deploy/libreelec/**

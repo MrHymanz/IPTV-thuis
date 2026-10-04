@@ -1,0 +1,14 @@
+[Unit]
+Description=IPTV thuis televisie
+After=network-online.target service.system.docker.service wireguard-home.service
+Requires=service.system.docker.service
+ConditionPathExists=/storage/iptv-thuis/enabled
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /storage/iptv-thuis/run-tv.sh
+ExecStop=-/storage/.kodi/addons/service.system.docker/bin/docker stop -t 5 iptv-thuis-tv
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

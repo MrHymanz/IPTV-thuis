@@ -2,7 +2,7 @@
 
 Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpagina. Ontworpen voor iemand die alleen wil kiezen, kijken en zappen, zonder Kodi-menu's.
 
-**Status: eerste implementatie voor Debian/Ubuntu met X11.** De automatische tests omvatten: webbeheer, opslag met 50.000 zenders en echte mpv-videoweergave/zappen op een virtueel X11-scherm. De eigen IPTV-aanbieder, de USB-afstandsbediening en het automatisch aanmelden moeten op de mediacenter-pc nog worden gecontroleerd. LibreELEC wordt door deze zelfstandige versie niet ondersteund: het is [specifiek gebouwd voor Kodi](https://wiki.libreelec.tv/). Dit project vervangt geen besturingssysteem.
+**Status: eerste implementatie voor Debian/Ubuntu met X11.** De automatische tests omvatten: webbeheer, opslag met 50.000 zenders en echte mpv-videoweergave/zappen op een virtueel X11-scherm. De eigen IPTV-aanbieder, de USB-afstandsbediening en het automatisch aanmelden moeten op de mediacenter-pc nog worden gecontroleerd. Voor LibreELEC Generic x86_64 is een aparte [tv-container met Xorg en mpv](deploy/libreelec/README.md) beschikbaar. Die vereist Docker en toegang tot lokale beeld-, geluid- en invoerapparaten; het reguliere Linux-installatiescript is daar niet geschikt voor. Dit project vervangt geen besturingssysteem.
 
 ## Functies
 
