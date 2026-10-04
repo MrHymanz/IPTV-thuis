@@ -4,6 +4,7 @@ import os
 import signal
 from pathlib import Path
 import threading
+import time
 
 from .server import AdminServer, credentials
 from .store import Store
@@ -12,7 +13,11 @@ from .store import Store
 def refresh_loop(store, stop):
     while not stop.is_set():
         source = store.setting('source')
-        if source:
+        try:
+            age = time.time() - float(store.setting('refreshed_at', '0'))
+        except ValueError:
+            age = 6 * 60 * 60
+        if source and age >= 6 * 60 * 60:
             try:
                 store.refresh_source()
             except Exception:

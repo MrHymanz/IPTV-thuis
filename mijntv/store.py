@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 import threading
 import tempfile
+import time
 from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -183,19 +184,38 @@ class Store:
             db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, value))
 
     def import_playlist(self, text, source=''):
+        # Build in short transactions: favorites must remain writable while a
+        # provider list with millions of entries is parsed. Swap table names
+        # only after validation succeeds, preserving the original on failure.
+        suffix = uuid.uuid4().hex
+        staging, previous = 'channels_import_' + suffix, 'channels_previous_' + suffix
         count = 0
-        def rows():
-            nonlocal count
-            for row in iter_m3u(text):
-                count += 1
-                yield row
-        with self.import_lock, self.connect() as db:
-            # Streaming parsing and writes are in one transaction. Any parse,
-            # network or disk error rolls back to the original working catalog.
-            db.execute('DELETE FROM channels WHERE manual=0')
-            db.executemany('INSERT INTO channels(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', rows())
-            db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('source', source))
-        return count
+        with self.import_lock:
+            try:
+                with self.connect() as db:
+                    db.execute(f'''CREATE TABLE {staging} (
+                        id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL,
+                        url TEXT NOT NULL, tvg_id TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0)''')
+                batch = []
+                for row in iter_m3u(text):
+                    batch.append(row)
+                    count += 1
+                    if len(batch) == 1000:
+                        with self.connect() as db:
+                            db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', batch)
+                        batch.clear()
+                with self.connect() as db:
+                    db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id) VALUES (?,?,?,?,?)', batch)
+                    db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
+                    db.execute(f'ALTER TABLE channels RENAME TO {previous}')
+                    db.execute(f'ALTER TABLE {staging} RENAME TO channels')
+                    db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('source', source))
+                    db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('refreshed_at', str(time.time())))
+                return count
+            finally:
+                with self.connect() as db:
+                    db.execute(f'DROP TABLE IF EXISTS {staging}')
+                    db.execute(f'DROP TABLE IF EXISTS {previous}')
 
     def import_url(self, source):
         with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:

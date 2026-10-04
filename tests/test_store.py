@@ -1,5 +1,6 @@
 import tempfile
 import io
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -110,6 +111,44 @@ class StoreTests(unittest.TestCase):
                        ('https://example.test','user',None)):
             with self.assertRaises(ValueError):
                 xtream_playlist_url(*values)
+
+    def test_favorites_remain_writable_during_background_import(self):
+        self.store.import_playlist(playlist())
+        ids = [row['id'] for row in self.store.catalog()['items']]
+        for channel_id in ids:
+            self.store.add_favorite(channel_id)
+        staging_ready, proceed = threading.Event(), threading.Event()
+        errors = []
+        def slow_playlist():
+            # Pause after the first batch was inserted, as a large parser would.
+            for i in range(1000):
+                yield f'#EXTINF:-1,Nieuw {i}\n'
+                yield f'https://example.test/{i}\n'
+            staging_ready.set()
+            if not proceed.wait(10):
+                raise RuntimeError('Test timeout')
+            yield from playlist('fresh').splitlines(keepends=True)
+        def import_list():
+            try:
+                self.store.import_playlist(slow_playlist(),'https://example.test/source')
+            except Exception as error:
+                errors.append(error)
+        thread = threading.Thread(target=import_list)
+        thread.start()
+        try:
+            self.assertTrue(staging_ready.wait(5))
+            self.store.reorder(ids[::-1])
+            self.store.rename(ids[0],'Nieuwe naam')
+            self.assertEqual(self.store.catalog()['total'],2, 'Oude catalogus blijft tijdens import actief')
+            self.assertEqual([f['id'] for f in self.store.favorites()],ids[::-1])
+        finally:
+            proceed.set()
+            thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors,[])
+        self.assertEqual(self.store.catalog()['total'],1002)
+        self.assertEqual([f['id'] for f in self.store.favorites()],ids[::-1])
+        self.assertEqual(self.store.favorites()[1]['label'],'Nieuwe naam')
 
 
 if __name__ == '__main__':

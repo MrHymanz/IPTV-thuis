@@ -11,7 +11,7 @@ Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpag
 - Pijltjes of CH+/CH− zappen direct door de favorieten tijdens de uitzending. Na de laatste volgt de eerste.
 - Terug opent de zenderlijst. OK tijdens het kijken toont kort de zendernaam.
 - Webbeheer op `http://IP-VAN-TV-PC:8080/admin`: Losse Xtream Codes-inloggegevens gebruiken, M3U uploaden of via een adres ophalen, zoeken, groepen filteren, favorieten toevoegen, verwijderen, hernoemen en ordenen door te slepen, eigen stream toevoegen.
-- Een opgeslagen M3U-adres wordt bij het starten en elke zes uur vernieuwd zolang de app draait. Een bestandsupload vervang je door opnieuw te uploaden.
+- Een opgeslagen M3U-adres wordt elke zes uur vernieuwd zolang de app draait. Bij starten wordt alleen opnieuw opgehaald als de laatst geslaagde import minstens zes uur oud is. Een bestandsupload vervang je door opnieuw te uploaden.
 - Eigen namen en volgorde blijven bewaard bij import. Verdwenen zenders blijven als niet beschikbaar zichtbaar en worden bij zappen overgeslagen.
 - Standaard uitgebreide M3U-lijsten met `#EXTINF`, HTTP(S), RTSP, RTMP en UDP. Kodi-stijl HTTP-headers na `|` worden doorgegeven aan mpv. DRM, aanbieder-specifieke loginflows, catch-up en EPG zijn niet geïmplementeerd.
 
@@ -102,7 +102,7 @@ Zenderidentiteit wordt afgeleid van `tvg-id`, oorspronkelijke naam, groep en het
 
 Playlists mogen maximaal **512 MB** zijn, zowel via een download als een bestandsupload. Downloads en uploads worden in blokken naar een tijdelijk bestand in de gegevensmap geschreven en vervolgens regel voor regel in SQLite verwerkt. De volledige playlist en zendercatalogus worden niet tegelijk in het geheugen geladen. Het tijdelijke bestand wordt ook bij fouten opgeruimd; zorg dat de gegevensmap voldoende vrije schijfruimte heeft voor de playlist en database.
 
-Een ongeldige, onderbroken of mislukte import laat de oude lijst intact. De nieuwe catalogus wordt in één SQLite-transactie opgeslagen. Zoekresultaten worden per honderd opgehaald, zodat de beheerpagina niet 50.000 elementen tegelijk hoeft te tekenen. Handmatige streams blijven bij import bestaan.
+Een ongeldige, onderbroken of mislukte import laat de oude lijst intact. De nieuwe catalogus wordt in een aparte tabel opgebouwd met korte transacties per duizend zenders. Favorieten blijven daardoor tijdens grote imports te bewerken. Pas na volledige verwerking wordt de catalogus in één transactie omgewisseld. Zoekresultaten worden per honderd opgehaald, zodat de beheerpagina niet alle zenders tegelijk hoeft te tekenen. Handmatige streams blijven bij import bestaan.
 
 ## Ontwikkelen en testen
 
