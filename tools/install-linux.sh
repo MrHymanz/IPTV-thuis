@@ -17,7 +17,7 @@ if [ -e /etc/os-release ] && grep -qi libreelec /etc/os-release; then
     exit 1
 fi
 sudo apt-get update
-sudo apt-get install -y python3 python3-tk mpv fonts-dejavu-core
+sudo apt-get install -y python3 python3-tk python3-pil python3-pil.imagetk mpv fonts-dejavu-core
 mkdir -p "$install_dir" "$HOME/.local/bin" "$HOME/.config/autostart"
 if [ "$project_dir" != "$install_dir" ]; then
     cp -R "$project_dir/mijntv" "$install_dir/"

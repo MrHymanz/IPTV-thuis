@@ -1,11 +1,16 @@
 """Large-button TV interface for an X11 Linux session."""
 import math
+import io
+import shutil
+import threading
+from pathlib import Path
 import queue
 import socket
 import time
 import tkinter as tk
 
 from .player import Player
+from .logos import LogoCache
 
 BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ffda83'
 
@@ -23,6 +28,10 @@ class TV:
         self.root.update_idletasks()
         screen_height = self.root.winfo_screenheight() if fullscreen else self.root.winfo_height()
         self.scale = max(.65, screen_height / 900)
+        self.logo_images, self.logo_pending, self.logo_retry = {}, set(), {}
+        self.logo_requests, self.logo_results = queue.Queue(), queue.Queue()
+        self.logo_cache = LogoCache(Path(store.path).parent)
+        threading.Thread(target=self.load_logos, daemon=True).start()
         self.channels, self.selected, self.page = [], 0, 0
         self.watching, self.player, self.pending_zap = False, None, None
         self.message_until = 0
@@ -34,14 +43,21 @@ class TV:
         self.home.lift()
         header = tk.Frame(self.home, bg=BG)
         header.pack(fill='x', padx=60, pady=(35, 20))
-        self.label(header, '▣  IPTV thuis', 25, bold=True).pack(side='left')
+        self.icon(header, 'tv', 50).pack(side='left', padx=(0, 15))
+        self.label(header, 'IPTV thuis', 25, bold=True).pack(side='left')
         self.clock = self.label(header, '', 23, color=MUTED)
         self.clock.pack(side='right')
+        storage = tk.Frame(header, bg=BG)
+        storage.pack(side='right', padx=(0, 35))
+        self.icon(storage, 'disk', 36).pack(side='left', padx=(0, 10))
+        self.storage_label = self.label(storage, '', 17, color=MUTED)
+        self.storage_label.pack(side='left')
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)
         self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 21, color=MUTED)
         self.subtitle.pack(anchor='w', padx=60, pady=(10, 25))
         self.tiles = tk.Frame(self.home, bg=BG)
         self.tiles.pack(fill='both', expand=True, padx=50)
+        self.tiles.grid_propagate(False)
         for col in range(5):
             self.tiles.columnconfigure(col, weight=1, uniform='channels')
         for row in range(2):
@@ -75,6 +91,8 @@ class TV:
         self.root.protocol('WM_DELETE_WINDOW', self.root.destroy)
         self.refresh()
         self.tick()
+        self.update_storage()
+        self.root.after(100, self.poll_logos)
         self.root.after(100, self.poll_player)
         self.root.after(200, self.present)
 
@@ -84,6 +102,79 @@ class TV:
         self.root.lift()
         self.root.update_idletasks()
         self.root.focus_force()
+
+    def icon(self, parent, kind, size):
+        scale = size * self.scale / 50
+        canvas = tk.Canvas(parent, width=50*scale, height=45*scale, bg=BG,
+                           highlightthickness=0)
+        def line(*points):
+            canvas.create_line(*[point*scale for point in points], fill=WHITE,
+                               width=max(2, 2.5*scale), capstyle='round', joinstyle='round')
+        if kind == 'tv':
+            canvas.create_rectangle(4*scale, 11*scale, 46*scale, 35*scale,
+                                    outline=WHITE, width=max(2, 2.5*scale))
+            line(15, 2, 25, 11, 35, 2)
+            line(25, 35, 25, 42)
+            line(16, 42, 34, 42)
+        else:
+            canvas.create_rectangle(5*scale, 8*scale, 45*scale, 38*scale,
+                                    outline=MUTED, width=max(2, 2.5*scale))
+            canvas.create_oval(12*scale, 13*scale, 38*scale, 27*scale,
+                               outline=MUTED, width=max(2, 2*scale))
+            line(10, 32, 29, 32)
+            canvas.create_oval(35*scale, 30*scale, 39*scale, 34*scale,
+                               outline='', fill=AMBER)
+        return canvas
+
+    def update_storage(self):
+        try:
+            # /data is a bind mount on LibreELEC's /storage, not the container image.
+            usage = shutil.disk_usage(Path(self.store.path).parent)
+            text = f'{usage.free / 1_000_000_000:.0f} GB vrij'
+        except OSError:
+            text = 'Ruimte onbekend'
+        self.storage_label.configure(text=text)
+        self.root.after(30000, self.update_storage)
+
+    def load_logos(self):
+        try:
+            from PIL import Image, ImageDraw, ImageOps
+        except ImportError:
+            return  # The text-only interface remains usable without Pillow.
+        width, height = int(180*self.scale), int(85*self.scale)
+        while True:
+            url = self.logo_requests.get()
+            try:
+                data, _ = self.logo_cache.get(url)
+                with Image.open(io.BytesIO(data)) as source:
+                    if source.width > 4096 or source.height > 4096:
+                        raise ValueError('Logo te groot.')
+                    logo = ImageOps.contain(source.convert('RGBA'), (width-24, height-20))
+                badge = Image.new('RGBA', (width, height))
+                ImageDraw.Draw(badge).rounded_rectangle((0, 0, width-1, height-1),
+                                                        radius=12, fill='white')
+                badge.alpha_composite(logo, ((width-logo.width)//2, (height-logo.height)//2))
+                self.logo_results.put((url, badge))
+            except Exception:
+                self.logo_results.put((url, None))
+
+    def poll_logos(self):
+        changed = False
+        while True:
+            try:
+                url, badge = self.logo_results.get_nowait()
+            except queue.Empty:
+                break
+            self.logo_pending.discard(url)
+            if badge is None:
+                self.logo_retry[url] = time.monotonic() + 300
+            else:
+                from PIL import ImageTk
+                self.logo_images[url] = ImageTk.PhotoImage(badge, master=self.root)
+                changed = True
+        if changed and not self.watching:
+            self.render()
+        self.root.after(100, self.poll_logos)
 
     def label(self, parent, text, size, color=WHITE, bold=False):
         return tk.Label(parent, text=text, bg=BG, fg=color, font=('DejaVu Sans', int(size*self.scale), 'bold' if bold else 'normal'), justify='left')
@@ -107,7 +198,16 @@ class TV:
             index = self.page*10+i
             if index < len(self.channels):
                 channel = self.channels[index]
-                b.configure(text=f'{index+1:02d}\n\n{channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
+                url = channel.get('logo') or ''
+                image = self.logo_images.get(url)
+                if (url and image is None and url not in self.logo_pending and
+                        time.monotonic() >= self.logo_retry.get(url, 0)):
+                    self.logo_pending.add(url)
+                    self.logo_requests.put(url)
+                b.configure(text=f'{index+1:02d} · {channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
+                            image=image or '', compound='top', padx=8, pady=10,
+                            wraplength=max(80, int(((self.root.winfo_width() if self.root.winfo_width() > 1
+                                                  else self.root.winfo_screenwidth())-100)/5-46)),
                             state='normal', highlightbackground=AMBER if index==self.selected else TILE,
                             bg='#304a5a' if index==self.selected else TILE)
                 b.grid()

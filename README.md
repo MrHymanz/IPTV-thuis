@@ -46,11 +46,13 @@ Het script installeert `python3-tk`, `mpv` en lettertypen met sudo, kopieert de 
 Handmatig starten zonder installatiescript:
 
 ```sh
-sudo apt-get install python3 python3-tk mpv fonts-dejavu-core
+sudo apt-get install python3 python3-tk python3-pil python3-pil.imagetk mpv fonts-dejavu-core
 python3 -m mijntv
 ```
 
-Bij de eerste start toont het lege overzicht het beheeradres, gebruikersnaam `admin` en het gegenereerde wachtwoord. Open dit adres op een laptop of telefoon op hetzelfde netwerk. Importeer de M3U en kies ongeveer 30 favorieten. Binnen vijf seconden verschijnen ze op de televisie. Alleen de gekozen favorieten verschijnen op het tv-scherm. In het webbeheer en de browser-preview tonen favorieten de echte `tvg-logo`-afbeeldingen uit de playlist. De server haalt ze op en bewaart ze lokaal; het browseradres bevat geen provider-inloggegevens. Bij ontbrekende of onbereikbare logo’s blijven naam en een eenvoudige tekstmarkering zichtbaar.
+Bij de eerste start toont het lege overzicht het beheeradres, gebruikersnaam `admin` en het gegenereerde wachtwoord. Open dit adres op een laptop of telefoon op hetzelfde netwerk. Importeer de M3U en kies ongeveer 30 favorieten. Binnen vijf seconden verschijnen ze op de televisie. Alleen de gekozen favorieten verschijnen op het tv-scherm. In het zelfstandige tv-scherm, het webbeheer en de browser-preview tonen favorieten de echte `tvg-logo`-afbeeldingen uit de playlist. De server haalt ze op en bewaart ze lokaal; het browseradres bevat geen provider-inloggegevens. Bij ontbrekende of onbereikbare logo’s blijven naam en een eenvoudige tekstmarkering zichtbaar.
+
+Het tv-scherm toont rechtsboven een schijficoon met de vrije ruimte op de schijf waarop de gegevensmap staat. Op LibreELEC is dat de `/storage`-schijf van de mediacenter-pc. De waarde wordt elke dertig seconden vernieuwd en weergegeven in GB (1 GB = 1 miljard bytes). Dit is een ruimte-indicator; opnemen is nog niet geïmplementeerd.
 
 ## Afstandsbediening
 
@@ -68,7 +70,7 @@ Een USB 2,4GHz-ontvanger die zich als toetsenbord presenteert kan deze toetsen r
 
 ## Beheer en gegevens
 
-Er zijn geen externe Python-pakketten nodig. Standaard staat alle configuratie in `~/.local/share/iptv-thuis/`, buiten de repository:
+De beheerbackend gebruikt alleen de Python-standaardbibliotheek. De tv-interface gebruikt Tk en Pillow voor zenderlogo’s; het Linux-installatiescript en de LibreELEC-tv-container installeren die onderdelen. Standaard staat alle configuratie in `~/.local/share/iptv-thuis/`, buiten de repository:
 
 - `mijntv.db`: zenders, streamadressen, favorieten en het opgeslagen M3U-adres.
 - `admin.json`: gezouten PBKDF2-hash van het beheerwachtwoord.
