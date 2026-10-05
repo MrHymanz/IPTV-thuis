@@ -55,3 +55,7 @@ Voor een update: stop de tv-service, bouw het image opnieuw en maak de container
 ## Gecontroleerde installatie
 
 Getest op een AOpen DE7200 (i7-4700MQ, Intel HD Graphics 4600) met LibreELEC 12.2.1 Generic x86_64. Het eigen overzicht werkt op 1920×1080, met zenderlogo’s en de vrije ruimte van de `/storage`-schijf; vijf providerstreams spelen met VAAPI en een actieve stereo-ALSA-uitvoer via HDMI 2. Toetsgestuurd zappen en Terug zijn gecontroleerd. Bij een beëindigde container keert Kodi terug. Automatisch openen van het zichtbare zenderoverzicht na een herstart is gecontroleerd, met WireGuard actief en Kodi inactief. De gebruiker heeft de werking van de echte afstandsbediening bevestigd. Hoorbaar geluid vraagt daarnaast controle bij de televisie.
+
+## Mediaknoppen van USB-afstandsbediening 1915:1025
+
+Deze ontvanger meldt zijn Consumer Control-interface als tablet. Libinput behandelt hem daardoor als tabletpad en geeft volume/mute niet als toetsen door. De tv-image bevat een gerichte Xorg-regel `99-iptv-remote.conf` die alleen deze media-interface met evdev als toetsenbord uitleest. Absolute en relatieve assen van deze interface worden genegeerd. De muis en het gewone toetsenbord van de ontvanger blijven via libinput werken. Zie de [evdev-documentatie](https://xorg.freedesktop.org/archive/X11R7.5/doc/man/man4/evdev.4.html).
