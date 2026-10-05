@@ -98,6 +98,12 @@ Het webbeheer heeft drie velden voor **Serveradres**, **IPTV-gebruikersnaam** en
 
 De provider moet deze Xtream Codes-playlistmethode ondersteunen. De velden worden niet vanuit de opgeslagen configuratie teruggevuld en het wachtwoord wordt na versturen uit het formulier gewist. Het samengestelde adres wordt in de lokale database bewaard voor automatisch vernieuwen; een mislukte aanvraag laat de bestaande zenderlijst intact.
 
+## Beeldinstellingen
+
+In het webbeheer onder **Beeldinstellingen** kies je automatisch, 720p, 1080p of 4K UHD (3840×2160). De zelfstandige X11-app biedt alleen resoluties aan die het aangesloten scherm meldt. De verversingssnelheid wordt door Xorg gekozen; op de AOpen DE7200 is 4K via deze HDMI-aansluiting maximaal 30 Hz. Opslaan stopt een lopende uitzending en heropent het zenderoverzicht binnen enkele seconden. De keuze blijft bewaard na herstart. Een opname van het geteste [4K-scherm](docs/tv-4k.png) staat in de documentatie. Als een ander scherm de ingestelde resolutie niet ondersteunt, blijft het huidige beeld behouden.
+
+Met **Beeldmarge** (0–10% aan elke rand) plaats je de hele interface en video verder van de tv-randen. Dit helpt bij overscan. De tv-instelling voor volledig beeld, vaak ‘Just Scan’, ‘Screen Fit’ of ‘1:1’, kan de afgesneden randen ook verhelpen. De Docker-browserpreview verandert geen HDMI-resolutie: instellingen daar gelden voor een zelfstandige app die dezelfde gegevensmap gebruikt. Voor LibreELEC stel je dit in op de beheerpagina van de mediacenter-pc zelf.
+
 ## Programmagids (EPG)
 
 Bij Xtream Codes-inloggegevens haalt de app automatisch de XMLTV-gids van de aanbieder op, bij de eerste start en daarna elke vier uur. In het zenderoverzicht zie je **Nu** en **Straks** voor de geselecteerde zender. Tijdens kijken verschijnt dezelfde informatie bij zappen of een druk op OK. De tijden volgen de lokale tijdzone van de tv-pc.

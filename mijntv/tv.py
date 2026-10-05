@@ -11,6 +11,7 @@ import tkinter as tk
 
 from .player import Player
 from .logos import LogoCache
+from .display import Display
 
 BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ffda83'
 
@@ -18,16 +19,23 @@ BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ff
 class TV:
     def __init__(self, store, port, bootstrap=None, fullscreen=True):
         self.store, self.port, self.bootstrap = store, port, bootstrap
+        self.display_settings = Display(store).settings()
+        self.restart_requested = False
         self.root = tk.Tk()
         self.root.title('IPTV thuis')
         self.root.configure(bg=BG)
+        mode = Display(store, native=True).query() if fullscreen else None
+        dimensions = mode['current'].split('x') if mode and mode['current'] else None
+        self.screen_width = int(dimensions[0]) if dimensions else self.root.winfo_screenwidth()
+        self.screen_height = int(dimensions[1]) if dimensions else self.root.winfo_screenheight()
+        self.root.tk.call('tk', 'scaling', 96/72)
         if fullscreen:
             self.root.configure(cursor='none')
-        self.root.geometry(f'{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}' if fullscreen else '1280x720')
+        self.root.geometry(f'{self.screen_width}x{self.screen_height}' if fullscreen else '1280x720')
         self.root.attributes('-fullscreen', fullscreen)
         self.root.update_idletasks()
-        screen_height = self.root.winfo_screenheight() if fullscreen else self.root.winfo_height()
-        self.scale = max(.65, screen_height / 900)
+        screen_height = self.screen_height if fullscreen else self.root.winfo_height()
+        self.scale = max(.65, screen_height * (1-self.display_settings['margin']/50) / 900)
         self.logo_images, self.logo_pending, self.logo_retry = {}, set(), {}
         self.logo_requests, self.logo_results = queue.Queue(), queue.Queue()
         self.logo_cache = LogoCache(Path(store.path).parent)
@@ -35,10 +43,13 @@ class TV:
         self.channels, self.selected, self.page = [], 0, 0
         self.watching, self.player, self.pending_zap = False, None, None
         self.message_until = 0
-        self.video = tk.Frame(self.root, bg='black')
+        self.content = tk.Frame(self.root, bg=BG)
+        margin = self.display_settings['margin'] / 100
+        self.content.place(relx=margin, rely=margin, relwidth=1-2*margin, relheight=1-2*margin)
+        self.video = tk.Frame(self.content, bg='black')
         self.video.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.video.update_idletasks()
-        self.home = tk.Frame(self.root, bg=BG)
+        self.home = tk.Frame(self.content, bg=BG)
         self.home.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.home.lift()
         header = tk.Frame(self.home, bg=BG)
@@ -80,7 +91,7 @@ class TV:
         self.next.pack(side='left', padx=20)
         self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Tijdens kijken: pijltjes of CH+/CH− om te zappen', 17, color=MUTED).pack(pady=(0, 25))
         self.setup = self.label(self.home, '', 20, color=AMBER)
-        self.banner = tk.Frame(self.root, bg=BG)
+        self.banner = tk.Frame(self.content, bg=BG)
         banner_text = tk.Frame(self.banner, bg=BG)
         banner_text.pack(side='left', padx=30, pady=14)
         self.banner_label = self.label(banner_text, '', 24, bold=True)
@@ -88,7 +99,7 @@ class TV:
         self.banner_programme = self.label(banner_text, '', 17, color=MUTED)
         self.banner_programme.pack(anchor='w', pady=(7, 0))
         self.small_button(self.banner, '← Zenderlijst', self.go_home).pack(side='right', padx=30, pady=14)
-        self.error = self.label(self.root, '', 25, color=AMBER)
+        self.error = self.label(self.content, '', 25, color=AMBER)
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
@@ -99,6 +110,16 @@ class TV:
         self.root.after(100, self.poll_logos)
         self.root.after(100, self.poll_player)
         self.root.after(200, self.present)
+        self.root.after(2000, self.check_display)
+
+    def check_display(self):
+        if Display(self.store).settings() != self.display_settings:
+            self.restart_requested = True
+            if self.player:
+                self.player.close()
+            self.root.destroy()
+            return
+        self.root.after(2000, self.check_display)
 
     def present(self):
         # Map and focus after the window manager has processed the first layout.
@@ -148,6 +169,8 @@ class TV:
         width, height = int(180*self.scale), int(85*self.scale)
         while True:
             url = self.logo_requests.get()
+            if url is None:
+                return
             try:
                 data, _ = self.logo_cache.get(url)
                 with Image.open(io.BytesIO(data)) as source:
@@ -218,7 +241,7 @@ class TV:
 
     def update_programme(self):
         text = self.programme_text()
-        width = max(200, self.root.winfo_screenwidth()-120)
+        width = max(200, int(self.screen_width * (1-self.display_settings['margin']/50))-120)
         self.subtitle.configure(text=text, wraplength=width)
         self.banner_programme.configure(text=text, wraplength=max(200, width-350))
 
@@ -236,8 +259,8 @@ class TV:
                     self.logo_requests.put(url)
                 b.configure(text=f'{index+1:02d} · {channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
                             image=image or '', compound='top', padx=8, pady=10,
-                            wraplength=max(80, int(((self.root.winfo_width() if self.root.winfo_width() > 1
-                                                  else self.root.winfo_screenwidth())-100)/5-46)),
+                            wraplength=max(80, int(((self.content.winfo_width() if self.content.winfo_width() > 1
+                                                  else self.screen_width * (1-self.display_settings['margin']/50))-100)/5-46)),
                             state='normal', highlightbackground=AMBER if index==self.selected else TILE,
                             bg='#304a5a' if index==self.selected else TILE)
                 b.grid()
@@ -405,5 +428,6 @@ class TV:
         try:
             self.root.mainloop()
         finally:
+            self.logo_requests.put(None)
             if self.player:
                 self.player.close()

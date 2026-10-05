@@ -183,6 +183,19 @@ class ServerTests(unittest.TestCase):
             fetch.assert_not_called()
         self.assertEqual(self.store.catalog()['total'],1)
 
+    def test_display_settings_require_login_and_validate_values(self):
+        self.assertEqual(self.request('GET', '/api/display', auth=False)[0], 401)
+        body = {'resolution':'3840x2160','margin':3}
+        self.assertEqual(self.request('POST', '/api/display', body, custom=False)[0], 403)
+        self.assertEqual(self.request('POST', '/api/display', body)[0], 200)
+        status, payload = self.request('GET', '/api/display')
+        result = json.loads(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual((result['resolution'], result['margin']), ('3840x2160', 3))
+        self.assertFalse(result['native'])
+        self.assertEqual(self.request('POST', '/api/display', {'resolution':'1920x1080','margin':-1})[0], 400)
+        self.assertEqual(self.server.display.settings(), body)
+
 
 if __name__ == '__main__':
     unittest.main()

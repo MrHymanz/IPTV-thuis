@@ -125,3 +125,13 @@ class BrowserDragTests(unittest.TestCase):
         self.page.keyboard.press('Escape')
         expect(self.page.locator('#programme')).to_contain_text('Nu programma 1')
         self.assertEqual(self.errors, [])
+
+    def test_display_preferences_can_be_saved_in_admin(self):
+        self.page.locator('#display-resolution').select_option('3840x2160')
+        self.page.locator('#display-margin').fill('3')
+        self.page.locator('#display-form button').click()
+        expect(self.page.locator('#message')).to_contain_text('Beeldinstellingen opgeslagen')
+        self.page.reload()
+        expect(self.page.locator('#display-resolution')).to_have_value('3840x2160')
+        expect(self.page.locator('#display-margin')).to_have_value('3')
+        self.assertEqual(self.errors, [])

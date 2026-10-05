@@ -101,6 +101,7 @@ function startFavoriteDrag(event, row, handle) {
   document.addEventListener('keydown', escape); frame = requestAnimationFrame(scroll);
 }
 async function load() {
+  await loadDisplay();
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);
   favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten`; $('refresh').disabled = !status.has_source;
   $('epg-refresh').disabled = !status.has_epg_source;
@@ -124,3 +125,15 @@ $('search-form').onsubmit = e => { e.preventDefault(); offset = 0; search().catc
 $('prev').onclick = () => { offset = Math.max(0,offset-100); search().catch(e => message(e.message,true)); };
 $('next').onclick = () => { offset += 100; search().catch(e => message(e.message,true)); };
 load().catch(e => message(e.message, true));
+
+async function loadDisplay() {
+  const display = await api('/api/display');
+  $('display-resolution').value = display.resolution;
+  for (const option of $('display-resolution').options) option.disabled = !display.available.includes(option.value);
+  $('display-margin').value = display.margin;
+  $('display-status').textContent = display.error || (display.native ? `Actief tv-signaal: ${display.current || 'onbekend'}.` : 'Deze instantie draait alleen webbeheer. De instelling geldt voor de zelfstandige tv-app die dezelfde gegevensmap gebruikt; de browserresolutie blijft door je scherm bepaald.');
+}
+$('display-form').onsubmit = event => {
+  event.preventDefault();
+  mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value)}, 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.');
+};

@@ -53,10 +53,12 @@ def main():
         server = AdminServer((args.host, args.port), store, auth, Path(__file__).parent/'web')
     except (ValueError, OSError) as error:
         parser.error(str(error))
+    server.display.native = not args.admin_only
     tv = None
     if not args.admin_only:
         try:
             from .tv import TV
+            server.display.apply()
             tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed)
             # Complete the initial Tk mapping before starting background workers.
             tv.root.update()
@@ -75,7 +77,13 @@ def main():
             while not stop.wait(1):
                 pass
         else:
-            tv.run()
+            while not stop.is_set():
+                tv.run()
+                if not tv.restart_requested:
+                    break
+                server.display.apply()
+                tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed)
+                tv.root.update()
     except KeyboardInterrupt:
         pass
     finally:
