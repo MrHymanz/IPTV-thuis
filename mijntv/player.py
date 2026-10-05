@@ -8,6 +8,8 @@ import tempfile
 import threading
 import time
 
+from .audio import audio_device
+
 
 class Player:
     def __init__(self, window_id):
@@ -16,8 +18,9 @@ class Player:
         self.directory = tempfile.TemporaryDirectory(prefix='iptv-')
         self.socket_path = os.path.join(self.directory.name, 'mpv.sock')
         audio = []
-        if os.environ.get('IPTV_AUDIO_DEVICE'):
-            audio = ['--ao=alsa', '--audio-device=' + os.environ['IPTV_AUDIO_DEVICE']]
+        device = audio_device()
+        if device:
+            audio = ['--ao=alsa', '--audio-device=' + device, '--audio-channels=stereo']
         self.process = subprocess.Popen([
             'mpv', '--no-config', '--idle=yes', '--keep-open=no', '--force-window=yes',
             '--wid=' + str(window_id), '--input-ipc-server=' + self.socket_path,

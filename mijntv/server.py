@@ -159,6 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                     result['imported'] = store.import_playlist(text)
             elif path == '/api/display':
                 self.server.display.save(data['resolution'], data['margin'])
+                result['native'] = self.server.display.native
             elif path == '/api/epg/refresh':
                 result['programmes'] = self.server.epg.refresh()
             elif path == '/api/refresh':

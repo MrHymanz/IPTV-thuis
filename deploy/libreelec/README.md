@@ -19,7 +19,7 @@ Kopieer de bronmap naar `/storage/iptv-thuis/source` en bouw:
 
 Maak `/storage/iptv-thuis/data` aan (modus 700). Een bestaande `mijntv.db` moet met SQLite backup worden gekopieerd, geen losse kopie van een draaiende database. Kopieer ook `admin.json` om dezelfde beheerlogin te gebruiken. De data op de tv en een andere Docker-host worden daarna onafhankelijk beheerd.
 
-Voer `create-container.sh` uit. De standaard HDMI-keuze is `alsa/hdmi:CARD=HDMI,DEV=2`, voor de geteste AOpen DE7200. Stel `IPTV_AUDIO_DEVICE` anders in als een andere aansluiting wordt gebruikt. Maak de container opnieuw om dat te wijzigen.
+Voer `create-container.sh` uit. Standaard kiest `IPTV_AUDIO_DEVICE=auto` de HDMI-uitgang waaraan ALSA de aangesloten tv koppelt. Op de geteste AOpen DE7200 met LG-tv is dat `alsa/hdmi:CARD=HDMI,DEV=0`. Stel `IPTV_AUDIO_DEVICE` expliciet in als een vaste aansluiting nodig is. Maak de container opnieuw om dat te wijzigen.
 
 Test eerst tijdelijk met Kodi gestopt en houd SSH open om terug te kunnen:
 

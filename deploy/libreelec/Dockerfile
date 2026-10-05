@@ -7,6 +7,6 @@ COPY mijntv /app/mijntv
 COPY deploy/libreelec/session.sh /usr/local/bin/iptv-session
 COPY deploy/libreelec/entrypoint.sh /usr/local/bin/iptv-start
 RUN chmod +x /usr/local/bin/iptv-session /usr/local/bin/iptv-start
-ENV HOME=/tmp/iptv-home DISPLAY=:0 IPTV_AUDIO_DEVICE=alsa/hdmi:CARD=HDMI,DEV=2
+ENV HOME=/tmp/iptv-home DISPLAY=:0 IPTV_AUDIO_DEVICE=auto
 HEALTHCHECK --interval=10s --start-period=90s --retries=3 CMD xdpyinfo >/dev/null && xdotool search --onlyvisible --name "^IPTV thuis$" >/dev/null && python3 -c "import urllib.request,urllib.error; exec('try:\n urllib.request.urlopen(\"http://127.0.0.1:8080/api/status\",timeout=3)\nexcept urllib.error.HTTPError as e:\n assert e.code==401')"
 ENTRYPOINT ["/usr/local/bin/iptv-start"]

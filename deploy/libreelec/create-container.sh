@@ -9,5 +9,5 @@ DOCKER=/storage/.kodi/addons/service.system.docker/bin/docker
     --mount type=bind,src=/etc/localtime,dst=/etc/localtime,readonly \
     --env TZ=:/etc/localtime \
     --tmpfs /tmp:exec,mode=1777 \
-    --env "IPTV_AUDIO_DEVICE=${IPTV_AUDIO_DEVICE:-alsa/hdmi:CARD=HDMI,DEV=2}" \
+    --env "IPTV_AUDIO_DEVICE=${IPTV_AUDIO_DEVICE:-auto}" \
     iptv-thuis-tv:local

@@ -11,7 +11,7 @@ function button(label, action, secondary = true) { const b = document.createElem
 function title(name, subtitle) { const wrap = document.createElement('div'); wrap.className = 'row-title'; const strong = document.createElement('strong'); strong.textContent = name; const small = document.createElement('small'); small.textContent = subtitle; wrap.append(strong, small); return wrap; }
 async function mutate(path, body, success) {
   if (busy) return; busy = true; message(path.startsWith('/api/import') || path === '/api/refresh' ? 'Zenderlijst ophalen en verwerken… Bij een grote lijst kan dit enkele minuten duren.' : 'Bezig…');
-  try { const result = await api(path, body); if (result.imported) offset = 0; message(result.imported ? `${result.imported.toLocaleString('nl-NL')} zenders geïmporteerd.` : success); await load(); }
+  try { const result = await api(path, body); if (result.imported) offset = 0; message(result.imported ? `${result.imported.toLocaleString('nl-NL')} zenders geïmporteerd.` : (typeof success === 'function' ? success(result) : success)); await load(); }
   catch (error) { if (path === '/api/favorites/order') renderFavorites(); message(error.message, true); } finally { busy = false; }
 }
 async function search() {
@@ -135,5 +135,5 @@ async function loadDisplay() {
 }
 $('display-form').onsubmit = event => {
   event.preventDefault();
-  mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value)}, 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.');
+  mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value)}, result => result.native ? 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.' : 'Voorkeur opgeslagen op deze beheerserver. Deze server bestuurt geen tv-scherm. Open de beheerpagina op de mediacenter-pc om het tv-beeld aan te passen.');
 };
