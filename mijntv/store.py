@@ -199,6 +199,19 @@ class Store:
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, value))
 
+    def cleanup_imports(self):
+        """Recover staging tables after a killed process, before importing starts."""
+        with self.import_lock, self.connect() as db:
+            names = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                     if re.fullmatch(r'channels_(?:import|previous)_[0-9a-f]{32}', row[0])]
+            db.execute('PRAGMA synchronous=NORMAL')
+            db.execute('PRAGMA secure_delete=OFF')
+            db.execute('PRAGMA cache_size=-32768')
+            for name in names:
+                db.execute(f'DROP TABLE "{name}"')
+                db.commit()
+            return len(names)
+
     def import_playlist(self, text, source=''):
         # Build in short transactions: favorites must remain writable while a
         # provider list with millions of entries is parsed. Swap table names
@@ -210,19 +223,27 @@ class Store:
             try:
                 with self.connect() as db:
                     db.execute(f'''CREATE TABLE {staging} (
-                        id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL,
+                        id TEXT NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL,
                         url TEXT NOT NULL, tvg_id TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0,
                         logo TEXT NOT NULL DEFAULT '')''')
-                batch = []
-                for row in iter_m3u(text):
-                    batch.append(row)
-                    count += 1
-                    if len(batch) == 1000:
-                        with self.connect() as db:
-                            db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id,logo) VALUES (?,?,?,?,?,?)', batch)
-                        batch.clear()
+                # Keep one writer open so closing each batch does not checkpoint
+                # the WAL repeatedly. NORMAL applies only to this rebuildable import.
                 with self.connect() as db:
+                    db.execute('PRAGMA synchronous=NORMAL')
+                    db.execute('PRAGMA cache_size=-32768')
+                    db.execute('PRAGMA wal_autocheckpoint=4096')
+                    batch = []
+                    for row in iter_m3u(text):
+                        batch.append(row)
+                        count += 1
+                        if len(batch) == 1000:
+                            db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id,logo) VALUES (?,?,?,?,?,?)', batch)
+                            db.commit()
+                            batch.clear()
                     db.executemany(f'INSERT INTO {staging}(id,name,group_name,url,tvg_id,logo) VALUES (?,?,?,?,?,?)', batch)
+                    # Build the ID index once after loading instead of updating
+                    # random index pages for every row on a mechanical disk.
+                    db.execute(f'CREATE UNIQUE INDEX {staging}_id ON {staging}(id)')
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
@@ -231,6 +252,9 @@ class Store:
                 return count
             finally:
                 with self.connect() as db:
+                    db.execute('PRAGMA synchronous=NORMAL')
+                    db.execute('PRAGMA secure_delete=OFF')
+                    db.execute('PRAGMA cache_size=-32768')
                     db.execute(f'DROP TABLE IF EXISTS {staging}')
                     db.execute(f'DROP TABLE IF EXISTS {previous}')
 

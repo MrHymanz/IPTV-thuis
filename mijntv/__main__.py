@@ -11,6 +11,9 @@ from .store import Store
 
 
 def refresh_loop(store, stop):
+    recovered = store.cleanup_imports()
+    if recovered:
+        print(f'Opgeruimde afgebroken imports: {recovered}', flush=True)
     while not stop.is_set():
         source = store.setting('source')
         try:

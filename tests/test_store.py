@@ -164,6 +164,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.channel_logo(ids[0]),'https://example.test/npo1.png')
         self.assertIn('/api/logos/',self.store.favorites()[1]['logo'])
 
+    def test_startup_recovers_abandoned_imports_without_losing_favorites(self):
+        self.store.import_playlist(playlist())
+        channel = self.store.catalog()['items'][0]['id']
+        self.store.add_favorite(channel, 'Bewaren')
+        with self.store.connect() as db:
+            db.execute('CREATE TABLE channels_import_' + 'a'*32 + ' (id TEXT)')
+            db.execute('CREATE TABLE channels_previous_' + 'b'*32 + ' (id TEXT)')
+            db.execute('CREATE TABLE unrelated_backup (id TEXT)')
+        self.assertEqual(self.store.cleanup_imports(), 2)
+        self.assertEqual(self.store.cleanup_imports(), 0)
+        self.assertEqual(self.store.catalog()['total'], 2)
+        self.assertEqual(self.store.favorites()[0]['label'], 'Bewaren')
+        with self.store.connect() as db:
+            self.assertIsNotNone(db.execute("SELECT name FROM sqlite_master WHERE name='unrelated_backup'").fetchone())
+
 
 if __name__ == '__main__':
     unittest.main()
