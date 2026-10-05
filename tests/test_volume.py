@@ -34,6 +34,13 @@ class VolumeTests(unittest.TestCase):
         self.tv.volume_label.configure.assert_called_with(text='Volume 0%')
         self.tv.root.after_cancel.assert_called()
 
+    def test_channel_buttons_reverse_without_changing_arrows(self):
+        self.tv.watching = True
+        self.tv.zap = Mock()
+        for key, direction in [('Next',-1), ('Prior',1), ('XF86AudioNext',-1), ('XF86AudioPrev',1), ('Right',1), ('Left',-1)]:
+            self.tv.key(SimpleNamespace(keysym=key))
+            self.tv.zap.assert_called_with(direction)
+
     def test_mute_then_volume_restores_sound_without_player(self):
         self.tv.player = None
         self.tv.key(SimpleNamespace(keysym='XF86AudioMute'))

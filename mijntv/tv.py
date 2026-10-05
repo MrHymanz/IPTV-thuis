@@ -435,9 +435,9 @@ class TV:
         if key in ('Escape','BackSpace','XF86Back','XF86Stop'):
             self.go_home()
         elif self.watching:
-            if key in ('Right','Up','Next','XF86AudioNext'):
+            if key in ('Right','Up','Prior','XF86AudioPrev'):
                 self.zap(1)
-            elif key in ('Left','Down','Prior','XF86AudioPrev'):
+            elif key in ('Left','Down','Next','XF86AudioNext'):
                 self.zap(-1)
             elif key in ('Return','KP_Enter','space'):
                 self.show_banner()

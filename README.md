@@ -60,8 +60,8 @@ Het tv-scherm toont rechtsboven een schijficoon met de vrije ruimte op de schijf
 | --- | --- | --- |
 | Pijltjes | Zender kiezen | Volgende/vorige favoriet |
 | OK / Enter / spatie | Zender starten | Zendernaam tonen |
-| CH+ / PageDown | Volgende pagina | Volgende favoriet |
-| CH− / PageUp | Vorige pagina | Vorige favoriet |
+| CH+ / PageDown | Volgende pagina | Vorige favoriet |
+| CH− / PageUp | Vorige pagina | Volgende favoriet |
 | Terug / Escape / Backspace | In overzicht blijven | Stoppen en zenderlijst openen |
 | F11 | Volledig scherm wisselen | Volledig scherm wisselen |
 | Ctrl+Q | App afsluiten | App afsluiten |
