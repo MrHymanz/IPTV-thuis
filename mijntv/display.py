@@ -52,6 +52,8 @@ class Display:
             db.executemany('INSERT OR REPLACE INTO settings VALUES (?,?)',
                            [('display_resolution', resolution), ('display_margin', str(margin))])
 
+        print(f'Beeldinstelling opgeslagen: resolutie={resolution}, marge={margin}%, tv-app={self.native}', flush=True)
+
     def apply(self):
         self.error = ''
         if not self.native:
@@ -65,5 +67,7 @@ class Display:
             option = ['--auto'] if resolution == 'auto' else ['--mode', resolution]
             subprocess.run(['xrandr', '--output', current['output'], *option],
                            capture_output=True, timeout=10, check=True)
+            print(f'Beeldresolutie toegepast: uitgang={current["output"]}, resolutie={resolution}', flush=True)
         except (OSError, subprocess.SubprocessError):
+            print(f'Beeldresolutie toepassen mislukt: resolutie={resolution}', flush=True)
             self.error = 'De resolutie kon niet worden toegepast; het huidige beeld blijft behouden.'

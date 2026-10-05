@@ -66,7 +66,7 @@ Het tv-scherm toont rechtsboven een schijficoon met de vrije ruimte op de schijf
 | F11 | Volledig scherm wisselen | Volledig scherm wisselen |
 | Ctrl+Q | App afsluiten | App afsluiten |
 
-Een USB 2,4GHz-ontvanger die zich als toetsenbord presenteert kan deze toetsen rechtstreeks sturen. CH-knoppen kunnen andere codes sturen; controleer ze op de tv-pc met bijvoorbeeld `xev` en pas indien nodig `TV.key` in `mijntv/tv.py` aan. Volume loopt via het systeem/de televisie; er is geen eigen volume-menu.
+Een USB 2,4GHz-ontvanger die zich als toetsenbord presenteert kan deze toetsen rechtstreeks sturen. CH-knoppen kunnen andere codes sturen; controleer ze op de tv-pc met bijvoorbeeld `xev` en pas indien nodig `TV.key` in `mijntv/tv.py` aan. Volume + en − (XF86AudioRaiseVolume/XF86AudioLowerVolume) wijzigen het spelervolume met 5%, met een korte melding in beeld. De instelling blijft bewaard bij zappen en herstart. De mute-knop schakelt het geluid uit of aan; volume aanpassen heft mute op. Het volume van de tv zelf blijft apart instelbaar.
 
 ## Beheer en gegevens
 

@@ -21,6 +21,9 @@ class TV:
         self.store, self.port, self.bootstrap = store, port, bootstrap
         self.display_settings = Display(store).settings()
         self.restart_requested = False
+        self.volume = max(0, min(100, int(store.setting('volume', '100'))))
+        self.muted = False
+        self.volume_timer = None
         self.root = tk.Tk()
         self.root.title('IPTV thuis')
         self.root.configure(bg=BG)
@@ -100,6 +103,7 @@ class TV:
         self.banner_programme.pack(anchor='w', pady=(7, 0))
         self.small_button(self.banner, '← Zenderlijst', self.go_home).pack(side='right', padx=30, pady=14)
         self.error = self.label(self.content, '', 25, color=AMBER)
+        self.volume_label = self.label(self.content, '', 25, bold=True)
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
@@ -322,6 +326,8 @@ class TV:
                 self.player = None
             if not self.player:
                 self.player = Player(self.video.winfo_id())
+                self.player.command('set_property', 'volume', self.volume)
+                self.player.command('set_property', 'mute', self.muted)
             self.player.play(channel['url'])
             self.root.focus_force()
             self.loading_started = time.monotonic()
@@ -397,8 +403,35 @@ class TV:
         self.clock.configure(text=time.strftime('%H:%M'))
         self.root.after(1000, self.tick)
 
+    def change_volume(self, delta=None):
+        if delta is None:
+            self.muted = not self.muted
+        else:
+            self.volume = max(0, min(100, self.volume + delta))
+            self.muted = False
+            self.store.set_setting('volume', str(self.volume))
+        if self.player:
+            try:
+                self.player.command('set_property', 'volume', self.volume)
+                self.player.command('set_property', 'mute', self.muted)
+            except RuntimeError:
+                pass
+        self.volume_label.configure(text='Geluid uit' if self.muted else f'Volume {self.volume}%')
+        self.volume_label.place(relx=.5, rely=.06, anchor='n')
+        self.volume_label.lift()
+        if self.volume_timer:
+            self.root.after_cancel(self.volume_timer)
+        self.volume_timer = self.root.after(2000, self.hide_volume)
+
+    def hide_volume(self):
+        self.volume_timer = None
+        self.volume_label.place_forget()
+
     def key(self, event):
         key = event.keysym
+        if key in ('XF86AudioRaiseVolume', 'XF86AudioLowerVolume', 'XF86AudioMute'):
+            self.change_volume({'XF86AudioRaiseVolume':5, 'XF86AudioLowerVolume':-5}.get(key))
+            return 'break'
         if key in ('Escape','BackSpace','XF86Back','XF86Stop'):
             self.go_home()
         elif self.watching:
