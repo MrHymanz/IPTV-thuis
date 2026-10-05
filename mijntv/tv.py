@@ -392,7 +392,7 @@ class TV:
                 elif (event['event']=='end-file' and event.get('reason') in ('error','eof')) or event['event']=='disconnected':
                     self.loading = False
                     self.show_error('Geen uitzending beschikbaar. Kies een andere zender of druk op Terug.')
-        if self.watching and getattr(self,'loading',False) and time.monotonic()-self.loading_started>25:
+        if self.watching and getattr(self,'loading',False) and time.monotonic()-self.loading_started>50:
             self.loading = False
             self.show_error('Verbinden duurt te lang. Kies een andere zender of druk op Terug.')
         if self.watching and time.monotonic()>self.message_until:
