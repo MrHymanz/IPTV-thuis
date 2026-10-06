@@ -37,3 +37,7 @@ ssh_config
 *.xmltv.gz
 xmltv*.xml
 xmltv*.xml.gz
+
+# Recorded broadcasts and private recorder input manifests
+recordings/
+*.ffconcat

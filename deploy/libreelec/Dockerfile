@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 RUN apt-get update && apt-get install -y --no-install-recommends xdotool python3-pil python3-pil.imagetk i965-va-driver && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends xserver-xorg-input-evdev && rm -rf /var/lib/apt/lists/*
 COPY deploy/libreelec/99-iptv-remote.conf /usr/share/X11/xorg.conf.d/99-iptv-remote.conf
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY mijntv /app/mijntv
 COPY deploy/libreelec/session.sh /usr/local/bin/iptv-session

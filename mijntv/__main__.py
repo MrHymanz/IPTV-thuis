@@ -62,7 +62,7 @@ def main():
         try:
             from .tv import TV
             server.display.apply()
-            tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed)
+            tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed, recordings=server.recordings)
             # Complete the initial Tk mapping before starting background workers.
             tv.root.update()
         except ImportError:
@@ -72,6 +72,8 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=refresh_loop, args=(store, stop), daemon=True).start()
     threading.Thread(target=server.epg.run, args=(stop,), daemon=True).start()
+    recorder_thread = threading.Thread(target=server.recordings.run, args=(stop,), daemon=True)
+    recorder_thread.start()
     print(f'Webbeheer: http://<IP-adres-van-deze-pc>:{args.port}/admin — gebruikersnaam admin', flush=True)
     if bootstrap and not store.favorites():
         print(f'Eerste beheerwachtwoord: {bootstrap}', flush=True)
@@ -85,12 +87,13 @@ def main():
                 if not tv.restart_requested:
                     break
                 server.display.apply()
-                tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed)
+                tv = TV(store, args.port, bootstrap, fullscreen=not args.windowed, recordings=server.recordings)
                 tv.root.update()
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
+        recorder_thread.join(timeout=12)
         server.shutdown()
         server.server_close()
 

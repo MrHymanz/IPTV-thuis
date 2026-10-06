@@ -102,11 +102,16 @@ function startFavoriteDrag(event, row, handle) {
 }
 async function load() {
   await loadDisplay();
+  await loadRecordings();
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);
   favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten`; $('refresh').disabled = !status.has_source;
   $('epg-refresh').disabled = !status.has_epg_source;
   $('epg-status').textContent = status.epg_updated_at ? `EPG bijgewerkt: ${new Date(status.epg_updated_at*1000).toLocaleString('nl-NL')}. Automatisch elke 4 uur.` : 'EPG wordt bij een Xtream-login automatisch opgehaald en elke 4 uur vernieuwd.';
   const selected = $('group').value; $('group').replaceChildren(new Option('Alle groepen', '')); groups.forEach(g => $('group').add(new Option(g || 'Zonder groep', g))); $('group').value = selected;
+  const guideSelected = $('guide-channel').value;
+  $('guide-channel').replaceChildren(...favorites.map(f => new Option(f.label, f.id)));
+  if (favorites.some(f => f.id === guideSelected)) $('guide-channel').value = guideSelected;
+  $('record-now').disabled = !favorites.length; $('guide-load').disabled = !favorites.length;
   renderFavorites(); await search();
 }
 $('file-form').onsubmit = async e => { e.preventDefault(); const file = $('file').files[0]; if (!file || busy) return; if (file.size > 512*1024*1024) { message('Het bestand is groter dan 512 MB.', true); return; } await mutate('/api/import/file', file, 'Lijst geïmporteerd.'); $('file-form').reset(); };
@@ -137,3 +142,37 @@ $('display-form').onsubmit = event => {
   event.preventDefault();
   mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value)}, result => result.native ? 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.' : 'Voorkeur opgeslagen op deze beheerserver. Deze server bestuurt geen tv-scherm. Open de beheerpagina op de mediacenter-pc om het tv-beeld aan te passen.');
 };
+
+function recordingTime(timestamp) { return new Date(timestamp*1000).toLocaleString('nl-NL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); }
+async function loadRecordings() {
+  const [storage, items] = await Promise.all([api('/api/storage'), api('/api/recordings')]);
+  if (document.activeElement !== $('recording-directory')) $('recording-directory').value = storage.directory;
+  $('storage-status').textContent = storage.available ? `${(storage.free/1e9).toFixed(1)} GB vrij van ${(storage.total/1e9).toFixed(1)} GB. Deze vrije ruimte wordt ook op het tv-hoofdscherm getoond.` : storage.error;
+  if (!storage.recorder_available) $('storage-status').textContent += ' FFmpeg is nog niet geïnstalleerd.';
+  $('recordings').replaceChildren();
+  if (!items.length) $('recordings').textContent = 'Nog geen opnames gepland.';
+  for (const item of items) {
+    const row = document.createElement('div'); row.className = 'row';
+    const actions = document.createElement('div'); actions.className = 'actions';
+    if (['queued','recording'].includes(item.state)) actions.append(button(item.state === 'recording' ? 'Opname stoppen' : 'Annuleren', () => mutate('/api/recordings/cancel', {id:item.id}, 'Opname gestopt of geannuleerd.')));
+    else actions.append(button('Verwijderen', () => { if (confirm(`Opname “${item.title}” definitief verwijderen?`)) mutate('/api/recordings/delete', {id:item.id}, 'Opname verwijderd.'); }));
+    if (item.playable && item.state !== 'recording') { const link = document.createElement('a'); link.href = '/api/recordings/file/' + item.id; link.textContent = 'Downloaden'; actions.append(link); }
+    row.append(title(item.title, `${item.channel} · ${recordingTime(item.start)}–${recordingTime(item.end)} · ${item.status}${item.bytes ? ' · ' + (item.bytes/1e9).toFixed(2) + ' GB' : ''}${item.error ? ' · ' + item.error : ''}`), actions);
+    $('recordings').append(row);
+  }
+}
+$('storage-form').onsubmit = event => { event.preventDefault(); mutate('/api/storage', {directory:$('recording-directory').value.trim()}, 'Opslaglocatie opgeslagen.'); };
+$('record-now').onclick = () => mutate('/api/recordings/schedule', {channel_id:$('guide-channel').value}, 'Opname ingepland; begint binnen enkele seconden.');
+$('guide-load').onclick = async () => {
+  try {
+    const channel_id = $('guide-channel').value, guide = await api('/api/guide?' + new URLSearchParams({id:channel_id}));
+    $('recording-guide').replaceChildren();
+    if (!guide.programmes.length) $('recording-guide').textContent = 'Geen programmagids beschikbaar voor deze zender.';
+    for (const item of guide.programmes) {
+      const row = document.createElement('div'); row.className = 'row';
+      row.append(title(item.title, `${guide.channel} · ${recordingTime(item.start)}–${recordingTime(item.end)}`), button('Opnemen', () => mutate('/api/recordings/schedule', {channel_id, start:item.start}, 'Opname ingepland.'), false));
+      $('recording-guide').append(row);
+    }
+  } catch (error) { message(error.message, true); }
+};
+setInterval(() => { if (!busy) loadRecordings().catch(() => {}); }, 10000);

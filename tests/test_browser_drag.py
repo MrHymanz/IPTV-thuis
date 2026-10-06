@@ -135,3 +135,32 @@ class BrowserDragTests(unittest.TestCase):
         expect(self.page.locator('#display-resolution')).to_have_value('3840x2160')
         expect(self.page.locator('#display-margin')).to_have_value('3')
         self.assertEqual(self.errors, [])
+
+    def test_recording_storage_guide_plan_cancel_delete_and_preview_free_space(self):
+        import time
+        from unittest.mock import patch
+        now = int(time.time())
+        with self.store.connect() as db:
+            db.execute('UPDATE channels SET tvg_id=? WHERE id=?', ('record.nl',self.ids[0]))
+            db.execute('INSERT INTO epg_programmes VALUES (?,?,?,?)', ('record.nl',now+100,now+200,'Opnameprogramma'))
+        self.page.locator('#recording-directory').fill(str(Path(self.directory.name)/'chosen-storage'))
+        self.page.locator('#storage-form button').click()
+        expect(self.page.locator('#message')).to_have_text('Opslaglocatie opgeslagen.')
+        self.page.wait_for_function('() => !busy')
+        expect(self.page.locator('#storage-status')).to_contain_text('GB vrij')
+        self.page.locator('#guide-load').click()
+        expect(self.page.locator('#recording-guide')).to_contain_text('Opnameprogramma')
+        with patch('mijntv.recordings.shutil.which',return_value='/usr/bin/ffmpeg'):
+            self.page.locator('#recording-guide button').click()
+            expect(self.page.locator('#message')).to_have_text('Opname ingepland.')
+            self.page.wait_for_function('() => !busy')
+        expect(self.page.locator('#recordings')).to_contain_text('Gepland')
+        self.page.locator('#recordings button').click()
+        expect(self.page.locator('#recordings')).to_contain_text('Geannuleerd')
+        self.page.wait_for_function('() => !busy')
+        self.page.once('dialog',lambda dialog: dialog.accept())
+        self.page.locator('#recordings button').click()
+        expect(self.page.locator('#recordings')).to_have_text('Nog geen opnames gepland.')
+        self.page.goto(f'http://127.0.0.1:{self.server.server_port}/tv')
+        expect(self.page.locator('#storage-free')).to_contain_text('GB vrij')
+        self.assertEqual(self.errors,[])

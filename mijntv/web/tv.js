@@ -79,6 +79,8 @@ document.addEventListener('keydown', e => {
 });
 async function refresh() {
   try {
+    const storageResponse = await fetch('/api/storage');
+    if (storageResponse.ok) { const storage = await storageResponse.json(); $('storage-free').textContent = storage.available ? `${(storage.free/1e9).toFixed(0)} GB vrij` : 'Opslag niet bereikbaar'; }
     const response = await fetch('/api/favorites'); if (!response.ok) throw new Error('Beheerverbinding verbroken; vernieuw deze pagina om opnieuw in te loggen.');
     const next = await response.json(), nextSignature = JSON.stringify(next);
     if (signature !== nextSignature) {

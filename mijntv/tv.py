@@ -1,7 +1,6 @@
 """Large-button TV interface for an X11 Linux session."""
 import math
 import io
-import shutil
 import threading
 from pathlib import Path
 import queue
@@ -17,8 +16,13 @@ BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ff
 
 
 class TV:
-    def __init__(self, store, port, bootstrap=None, fullscreen=True):
+    def __init__(self, store, port, bootstrap=None, fullscreen=True, recordings=None):
         self.store, self.port, self.bootstrap = store, port, bootstrap
+        self.recordings = recordings
+        self.panel_mode = None
+        self.panel_selected = 0
+        self.header_selected = None
+        self.playing_recording = None
         self.display_settings = Display(store).settings()
         self.restart_requested = False
         self.volume = max(0, min(100, int(store.setting('volume', '100'))))
@@ -66,6 +70,12 @@ class TV:
         self.icon(storage, 'disk', 36).pack(side='left', padx=(0, 10))
         self.storage_label = self.label(storage, '', 17, color=MUTED)
         self.storage_label.pack(side='left')
+        self.home_actions = tk.Frame(self.home, bg=BG)
+        self.home_actions.pack(anchor='e', padx=60)
+        self.library_button = self.small_button(self.home_actions, 'Opnames', lambda: self.open_panel('recordings'))
+        self.library_button.pack(side='left', padx=8)
+        self.guide_button = self.small_button(self.home_actions, 'Programmagids / opnemen', lambda: self.open_panel('guide'))
+        self.guide_button.pack(side='left', padx=8)
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)
         self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 17, color=MUTED)
         self.subtitle.pack(anchor='w', padx=60, pady=(10, 25))
@@ -104,6 +114,15 @@ class TV:
         self.small_button(self.banner, '← Zenderlijst', self.go_home).pack(side='right', padx=30, pady=14)
         self.error = self.label(self.content, '', 25, color=AMBER)
         self.volume_label = self.label(self.content, '', 25, bold=True)
+        self.panel = tk.Frame(self.content, bg=BG)
+        self.panel_title = self.label(self.panel, '', 32, bold=True)
+        self.panel_title.pack(anchor='w', padx=60, pady=(30, 10))
+        self.panel_hint = self.label(self.panel, '', 17, color=MUTED)
+        self.panel_hint.pack(anchor='w', padx=60, pady=(0, 15))
+        self.panel_rows = tk.Frame(self.panel, bg=BG)
+        self.panel_rows.pack(fill='both', expand=True, padx=60)
+        self.small_button(self.panel, '← Terug naar zenders', self.go_home).pack(pady=20)
+        self.small_button(self.banner, '● Opnemen', self.record_current).pack(side='right', padx=10, pady=14)
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
@@ -156,12 +175,8 @@ class TV:
         return canvas
 
     def update_storage(self):
-        try:
-            # /data is a bind mount on LibreELEC's /storage, not the container image.
-            usage = shutil.disk_usage(Path(self.store.path).parent)
-            text = f'{usage.free / 1_000_000_000:.0f} GB vrij'
-        except OSError:
-            text = 'Ruimte onbekend'
+        status = self.recordings.storage() if self.recordings else {}
+        text = f'{status["free"] / 1_000_000_000:.0f} GB vrij' if status.get('available') else 'Opslag niet bereikbaar'
         self.storage_label.configure(text=text)
         self.root.after(30000, self.update_storage)
 
@@ -222,8 +237,14 @@ class TV:
         self.page = self.selected // 10
         if not self.watching:
             self.render()
-        if self.watching:
+        if self.watching and not self.playing_recording:
             self.update_programme()
+        if self.panel_mode == 'recordings':
+            old_recording = self.panel_items[self.panel_selected]['id'] if self.panel_items else None
+            self.panel_items = self.recordings.list()
+            self.panel_selected = next((i for i, item in enumerate(self.panel_items) if item['id'] == old_recording),
+                                       min(self.panel_selected, max(0, len(self.panel_items)-1)))
+            self.render_panel()
         self.root.after(5000, self.refresh)
 
     def programme_text(self):
@@ -291,6 +312,96 @@ class TV:
         else:
             self.setup.pack_forget()
 
+    def render_header(self):
+        for index, button in enumerate((self.library_button, self.guide_button)):
+            button.configure(bg='#304a5a' if self.header_selected == index else TILE,
+                             fg=AMBER if self.header_selected == index else WHITE)
+
+    def record_current(self):
+        if not self.recordings or not self.channels or self.playing_recording:
+            return
+        try:
+            self.recordings.schedule(self.channels[self.selected]['id'])
+            self.show_error('Opname ingepland. Bekijk de status bij Opnames.')
+            self.root.after(3000, self.error.place_forget)
+        except (ValueError, OSError) as error:
+            self.show_error(str(error) if isinstance(error, ValueError) else 'Opslag niet bereikbaar.')
+
+    def open_panel(self, mode):
+        if not self.recordings:
+            return
+        if mode == 'guide' and not self.channels:
+            self.show_error('Voeg eerst zenders toe via de beheerpagina.')
+            return
+        self.go_home()
+        self.header_selected = None
+        self.render_header()
+        self.panel_mode, self.panel_selected = mode, 0
+        try:
+            if mode == 'guide':
+                if not self.channels:
+                    return
+                self.panel_channel = self.channels[self.selected]['id']
+                guide = self.recordings.guide(self.panel_channel)
+                self.panel_items = guide['programmes']
+                heading = 'Programmagids · ' + guide['channel']
+                hint = 'Pijltjes: programma kiezen · OK: opname plannen · Terug: zenders'
+            else:
+                self.panel_items = self.recordings.list()
+                heading = 'Mijn opnames'
+                hint = 'Pijltjes: kiezen · OK: afspelen · Terug: zenders. Beheer opnames via de beheerpagina.'
+            self.panel_title.configure(text=heading)
+            self.panel_hint.configure(text=hint)
+            self.panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self.panel.lift()
+            self.render_panel()
+        except ValueError as error:
+            self.show_error(str(error))
+
+    def render_panel(self):
+        for widget in self.panel_rows.winfo_children():
+            widget.destroy()
+        if not self.panel_items:
+            self.label(self.panel_rows, 'Nog geen opnames.' if self.panel_mode == 'recordings' else 'Geen programmagids beschikbaar voor deze zender.', 22).pack(pady=30)
+        page = self.panel_selected // 6
+        for index in range(page*6, min(len(self.panel_items), page*6+6)):
+            item = self.panel_items[index]
+            stamp = time.strftime('%d-%m %H:%M', time.localtime(item['start']))
+            subtitle = item['channel'] + ' · ' + item['status'] if self.panel_mode == 'recordings' else time.strftime('Tot %H:%M', time.localtime(item['end']))
+            button = self.small_button(self.panel_rows, stamp + ' · ' + item['title'] + '\n' + subtitle,
+                                       lambda index=index: self.panel_choose(index))
+            button.configure(anchor='w', justify='left', wraplength=max(300, self.content.winfo_width()-180),
+                             bg='#304a5a' if index == self.panel_selected else TILE,
+                             fg=AMBER if index == self.panel_selected else WHITE)
+            button.pack(fill='x', pady=5)
+
+    def panel_choose(self, index=None):
+        if index is not None:
+            self.panel_selected = index
+        if not self.panel_items:
+            return
+        item = self.panel_items[self.panel_selected]
+        try:
+            if self.panel_mode == 'guide':
+                self.recordings.schedule(self.panel_channel, item['start'])
+                self.show_error('Opname ingepland. Bekijk de status bij Opnames.')
+                self.root.after(3000, self.error.place_forget)
+            elif item['playable']:
+                path = self.recordings.playback(item['id'])
+                self.panel.place_forget()
+                self.panel_mode = None
+                self.home.place_forget()
+                self.watching = True
+                self.playing_recording = item['id']
+                self.banner_label.configure(text=item['title'])
+                self.banner_programme.configure(text='OK: pauze · Links/rechts: 30 seconden terug/vooruit · Terug: opnames')
+                self.show_banner(60)
+                self.start_stream({'url': str(path)})
+            else:
+                self.show_error(item['error'] or 'Deze opname is nog niet beschikbaar om af te spelen.')
+        except (ValueError, OSError) as error:
+            self.show_error(str(error) if isinstance(error, ValueError) else 'Opname niet bereikbaar.')
+
     def change_page(self, delta):
         if not self.channels:
             return
@@ -308,6 +419,7 @@ class TV:
             return
         self.selected, self.page = index, index//10
         self.watching = True
+        self.playing_recording = None
         self.error.place_forget()
         self.home.place_forget()
         self.banner.lift()
@@ -351,6 +463,11 @@ class TV:
             self.root.after_cancel(self.pending_zap)
             self.pending_zap = None
         self.watching = False
+        self.playing_recording = None
+        self.panel_mode = None
+        self.header_selected = None
+        self.render_header()
+        self.panel.place_forget()
         self.loading = False
         if self.player:
             try:
@@ -386,11 +503,16 @@ class TV:
                     self.loading = False
                     self.root.focus_force()
                     self.error.place_forget()
-                    if self.channels:
+                    if self.playing_recording:
+                        self.banner_label.configure(text='Opname afspelen — Terug: opnames')
+                    elif self.channels:
                         self.banner_label.configure(text=f'{self.selected+1} · {self.channels[self.selected]["label"]}   —   Pijltjes: zappen')
                     self.show_banner()
                 elif (event['event']=='end-file' and event.get('reason') in ('error','eof')) or event['event']=='disconnected':
                     self.loading = False
+                    if self.playing_recording:
+                        self.open_panel('recordings')
+                        continue
                     self.show_error('Geen uitzending beschikbaar. Kies een andere zender of druk op Terug.')
         if self.watching and getattr(self,'loading',False) and time.monotonic()-self.loading_started>50:
             self.loading = False
@@ -432,16 +554,52 @@ class TV:
         if key in ('XF86AudioRaiseVolume', 'XF86AudioLowerVolume', 'XF86AudioMute'):
             self.change_volume({'XF86AudioRaiseVolume':5, 'XF86AudioLowerVolume':-5}.get(key))
             return 'break'
+        if key in ('XF86Record', 'r', 'R'):
+            self.record_current()
+            return 'break'
+        if key in ('Menu', 'XF86MenuKB', 'F2', 'o', 'O'):
+            self.open_panel('recordings')
+            return 'break'
+        if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_recording', None):
+            self.open_panel('recordings')
+            return 'break'
         if key in ('Escape','BackSpace','XF86Back','XF86Stop'):
             self.go_home()
+        elif getattr(self, 'panel_mode', None):
+            if key in ('Return', 'KP_Enter', 'space'):
+                self.panel_choose()
+            elif key in ('Up', 'Down', 'Prior', 'Next'):
+                delta = {'Up':-1, 'Down':1, 'Prior':-6, 'Next':6}[key]
+                self.panel_selected = max(0, min(len(self.panel_items)-1, self.panel_selected+delta))
+                self.render_panel()
         elif self.watching:
+            if getattr(self, 'playing_recording', None):
+                if key in ('Left', 'Right') and self.player:
+                    self.player.command('seek', -30 if key == 'Left' else 30, 'relative')
+                elif key in ('Return', 'KP_Enter', 'space') and self.player:
+                    self.player.command('cycle', 'pause')
+                return 'break'
             if key in ('Right','Up','Prior','XF86AudioPrev'):
                 self.zap(1)
             elif key in ('Left','Down','Next','XF86AudioNext'):
                 self.zap(-1)
             elif key in ('Return','KP_Enter','space'):
                 self.show_banner()
+        elif getattr(self, 'header_selected', None) is not None:
+            if key in ('Return', 'KP_Enter', 'space'):
+                self.open_panel('recordings' if self.header_selected == 0 else 'guide')
+            elif key in ('Left', 'Right'):
+                self.header_selected = 0 if key == 'Left' else 1
+                self.render_header()
+            elif key == 'Down':
+                self.header_selected = None
+                self.render_header()
+                self.render()
         elif self.channels:
+            if key == 'Up' and self.selected % 10 < 5:
+                self.header_selected = 0
+                self.render_header()
+                return 'break'
             if key in ('Return','KP_Enter','space'):
                 self.choose(self.selected)
             elif key in ('Next','Prior'):

@@ -197,5 +197,32 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.server.display.settings(), body)
 
 
+    def test_recording_storage_and_epg_routes_are_authenticated_and_private(self):
+        import time
+        self.store.import_playlist('#EXTM3U\n#EXTINF:-1 tvg-id="test",Test\nhttps://example.test/stream?secret=provider-password')
+        channel_id = self.store.catalog()['items'][0]['id']
+        self.store.add_favorite(channel_id)
+        now = int(time.time())
+        with self.store.connect() as db:
+            db.execute('INSERT INTO epg_programmes VALUES (?,?,?,?)', ('test',now+100,now+200,'Testprogramma'))
+        for path in ('/api/storage','/api/recordings','/api/guide?id='+channel_id,'/api/recordings/file/test'):
+            self.assertEqual(self.request('GET',path,auth=False)[0],401)
+        directory = str(Path(self.directory.name)/'tv-recordings')
+        self.assertEqual(self.request('POST','/api/storage',{'directory':directory},custom=False)[0],403)
+        self.assertEqual(self.request('POST','/api/storage',{'directory':directory})[0],200)
+        self.assertEqual(json.loads(self.request('GET','/api/storage')[1])['directory'],directory)
+        self.assertEqual(json.loads(self.request('GET','/api/guide?id='+channel_id)[1])['programmes'][0]['title'],'Testprogramma')
+        with patch('mijntv.recordings.shutil.which',return_value='/usr/bin/ffmpeg'):
+            status,payload = self.request('POST','/api/recordings/schedule',{'channel_id':channel_id,'start':now+100})
+        self.assertEqual(status,200)
+        identifier = json.loads(payload)['id']
+        self.assertNotIn(b'provider-password',self.request('GET','/api/recordings')[1])
+        self.assertEqual(self.request('POST','/api/recordings/delete',{'id':identifier})[0],400)
+        self.assertEqual(self.request('POST','/api/recordings/cancel',{'id':identifier})[0],200)
+        Path(directory,identifier+'.ts').write_bytes(b'test-video')
+        self.assertEqual(self.request('GET','/api/recordings/file/'+identifier),(200,b'test-video'))
+        self.assertEqual(self.request('POST','/api/recordings/delete',{'id':identifier})[0],200)
+        self.assertEqual(json.loads(self.request('GET','/api/recordings')[1]),[])
+
 if __name__ == '__main__':
     unittest.main()

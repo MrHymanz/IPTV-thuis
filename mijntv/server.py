@@ -13,6 +13,7 @@ from .store import MAX_PLAYLIST, xtream_playlist_url
 from .logos import LogoCache
 from .epg import EPG
 from .display import Display
+from .recordings import Recordings
 
 
 def hash_password(password, salt):
@@ -45,6 +46,7 @@ class AdminServer(ThreadingHTTPServer):
         self.logos = LogoCache(Path(store.path).parent)
         self.epg = EPG(store)
         self.display = Display(store)
+        self.recordings = Recordings(store)
         super().__init__(address, Handler)
 
 
@@ -96,6 +98,30 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(200, data, mime)
                 except ValueError:
                     self.reply(404, {'error': 'Logo niet beschikbaar.'})
+            elif parts.path == '/api/storage':
+                self.reply(200, self.server.recordings.storage())
+            elif parts.path == '/api/recordings':
+                self.reply(200, self.server.recordings.list())
+            elif parts.path == '/api/guide':
+                self.reply(200, self.server.recordings.guide(params.get('id', [''])[0]))
+            elif parts.path.startswith('/api/recordings/file/'):
+                file = self.server.recordings.playback(parts.path.rsplit('/', 1)[-1])
+                with file.open('rb') as stream:
+                    size = os.fstat(stream.fileno()).st_size
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'video/mp2t')
+                    self.send_header('Content-Length', str(size))
+                    self.send_header('Content-Disposition', 'attachment; filename="' + file.name + '"')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    remaining = size
+                    while remaining > 0:
+                        chunk = stream.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
             elif parts.path == '/api/display':
                 self.reply(200, self.server.display.status())
             elif parts.path == '/api/status':
@@ -116,6 +142,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:
                 self.reply(404, {'error': 'Niet gevonden.'})
+        except (BrokenPipeError, ConnectionResetError):
+            return
         except ValueError:
             self.reply(400, {'error': 'Ongeldige zoekopdracht.'})
         except Exception:
@@ -157,6 +185,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(text, str) or len(text.encode()) > MAX_PLAYLIST:
                         raise ValueError('Ongeldige of te grote M3U.')
                     result['imported'] = store.import_playlist(text)
+            elif path == '/api/storage':
+                result['storage'] = self.server.recordings.save_storage(data['directory'])
+            elif path == '/api/recordings/schedule':
+                result['id'] = self.server.recordings.schedule(data['channel_id'], data.get('start'))
+            elif path == '/api/recordings/cancel':
+                self.server.recordings.cancel(data['id'])
+            elif path == '/api/recordings/delete':
+                self.server.recordings.delete(data['id'])
             elif path == '/api/display':
                 self.server.display.save(data['resolution'], data['margin'])
                 result['native'] = self.server.display.native
