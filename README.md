@@ -2,11 +2,48 @@
 
 Een zelfstandige Linux-tv-app met grote zenderknoppen en een aparte webbeheerpagina. Ontworpen voor iemand die alleen wil kiezen, kijken en zappen, zonder Kodi-menu's.
 
-**Status: eerste implementatie voor Debian/Ubuntu met X11.** De automatische tests omvatten: webbeheer, opslag met 50.000 zenders en echte mpv-videoweergave/zappen op een virtueel X11-scherm. De eigen IPTV-aanbieder, de USB-afstandsbediening en het automatisch aanmelden moeten op de mediacenter-pc nog worden gecontroleerd. Voor LibreELEC Generic x86_64 is een aparte [tv-container met Xorg en mpv](deploy/libreelec/README.md) beschikbaar. Die vereist Docker en toegang tot lokale beeld-, geluid- en invoerapparaten; het reguliere Linux-installatiescript is daar niet geschikt voor. Dit project vervangt geen besturingssysteem.
+De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Linux-installatiescript beschikbaar; voor LibreELEC Generic x86_64 is er een aparte [tv-container met Xorg en mpv](deploy/libreelec/README.md). De LibreELEC-versie is getest met HDMI-beeld en -geluid, een USB-afstandsbediening, EPG en opnames. De reguliere Docker-container biedt webbeheer en een browserpreview; live afspelen gebeurt in de zelfstandige tv-app.
+
+## Screenshots
+
+De screenshots tonen de echte interface met voorbeeldzenders, programma's en opnames. De beschikbare logo's komen uit de zenderlijst; bij ontbrekende logo's blijft de zendernaam zichtbaar. Er staan geen provider-inloggegevens of persoonlijke beheerinstellingen in beeld.
+
+### Televisie
+
+Grote favorietenknoppen, de huidige en volgende uitzending en de vrije ruimte op de ingestelde opnameschijf.
+
+![Tv-hoofdscherm met favorieten, EPG en vrije opslagruimte](docs/screenshots/tv-home.png)
+
+### Programmagids en opnemen
+
+Kies een programma met de pijltjes en druk op OK om de opname te plannen.
+
+![Programmagids op de tv met programma's om op te nemen](docs/screenshots/tv-programmagids.png)
+
+### Opnames terugkijken
+
+Een eenvoudig overzicht van geplande en opgenomen programma's.
+
+![Opnameoverzicht op de tv](docs/screenshots/tv-opnames.png)
+
+### Zenders beheren
+
+Zoek zenders, pas namen aan en sleep favorieten naar de gewenste volgorde.
+
+![Webbeheer met zenderzoeker en versleepbare favorieten](docs/screenshots/beheer-zenders.png)
+
+### Opnames en opslag beheren
+
+Stel de opnamemap in, plan via de EPG en beheer bewaarde opnames.
+
+![Webbeheer voor opslag, EPG-planning en opnames](docs/screenshots/beheer-opnames.png)
 
 ## Functies
 
 - Maximaal tien grote favorieten per pagina; meer pagina's verschijnen automatisch.
+- EPG met huidige en volgende uitzending, plus een programmagids om opnames te plannen.
+- Opnames terugkijken op de tv; opslaglocatie, planning en bestanden beheren via de webpagina.
+- Vrije ruimte van de ingestelde opnameschijf zichtbaar op het hoofdscherm.
 - Streams spelen met mpv binnen hetzelfde venster.
 - Pijltjes of CH+/CH− zappen direct door de favorieten tijdens de uitzending. Na de laatste volgt de eerste.
 - Terug opent de zenderlijst. OK tijdens het kijken toont kort de zendernaam en de huidige en volgende uitzending.
@@ -52,7 +89,7 @@ python3 -m mijntv
 
 Bij de eerste start toont het lege overzicht het beheeradres, gebruikersnaam `admin` en het gegenereerde wachtwoord. Open dit adres op een laptop of telefoon op hetzelfde netwerk. Importeer de M3U en kies ongeveer 30 favorieten. Binnen vijf seconden verschijnen ze op de televisie. Alleen de gekozen favorieten verschijnen op het tv-scherm. In het zelfstandige tv-scherm, het webbeheer en de browser-preview tonen favorieten de echte `tvg-logo`-afbeeldingen uit de playlist. De server haalt ze op en bewaart ze lokaal; het browseradres bevat geen provider-inloggegevens. Bij ontbrekende of onbereikbare logo’s blijven naam en een eenvoudige tekstmarkering zichtbaar.
 
-Het tv-scherm toont rechtsboven een schijficoon met de vrije ruimte op de schijf waarop de gegevensmap staat. Op LibreELEC is dat de `/storage`-schijf van de mediacenter-pc. De waarde wordt elke dertig seconden vernieuwd en weergegeven in GB (1 GB = 1 miljard bytes). Dit is een ruimte-indicator; opnemen is nog niet geïmplementeerd.
+Het tv-scherm toont rechtsboven een schijficoon met de vrije ruimte van de ingestelde opnamemap. Op LibreELEC is de standaardmap `/storage/iptv-thuis/recordings`. De waarde wordt elke dertig seconden vernieuwd en weergegeven in GB (1 GB = 1 miljard bytes). Zie [Opnemen met de programmagids](#opnemen-met-de-programmagids) voor opslagkeuze en opnamebediening.
 
 ## Afstandsbediening
 
