@@ -14,6 +14,12 @@ Grote favorietenknoppen, de huidige en volgende uitzending en de vrije ruimte op
 
 ![Tv-hoofdscherm met favorieten, EPG en vrije opslagruimte](docs/screenshots/tv-home.png)
 
+### Zijmenu
+
+Open met Menu vanuit elke zender. Het zijmenu heeft pictogrammen en een afgeronde, goudgele selectie voor Zenders, Opnames en Programmagids / opnemen. Terug sluit het menu en bewaart de geselecteerde zender.
+
+![Tv-zijmenu met pictogrammen en goudgele selectie](docs/screenshots/tv-zijmenu.png)
+
 ### Programmagids en opnemen
 
 Kies een programma met de pijltjes en druk op OK om de opname te plannen.
@@ -189,7 +195,7 @@ Het schijficoon op de tv en de browserpreview toont de vrije ruimte van de inges
 
 Kies in het beheer een favoriete zender en open de programmagids. **Opnemen** plant precies de begin- en eindtijd van het EPG-programma. Bij een lopend programma wordt alleen het resterende deel opgenomen; er is geen terugkijkbuffer. **Huidig programma opnemen** gebruikt de eindtijd uit de EPG, of neemt één uur op wanneer programmagegevens ontbreken. Eén opname tegelijk: overlappende plannen worden geweigerd. De pc moet aan blijven. Geplande opnames blijven in SQLite bewaard, starten ook na een herstart wanneer het programma nog loopt, en krijgen een foutstatus wanneer het volledige tijdvak is gemist. Een tijdens herstart actieve opname krijgt de status Onderbroken; het gedeeltelijke bestand blijft bewaard, maar wordt niet automatisch hervat.
 
-Op de tv: druk in de bovenste rij zenders op **pijl omhoog**, kies **Opnames** of **Programmagids / opnemen** met links/rechts en druk OK. In de gids plant OK het geselecteerde programma. In Opnames speelt OK het geselecteerde beschikbare bestand af. Tijdens terugkijken: OK pauzeert, links/rechts springen 30 seconden en Terug opent de opnamelijst. Menu/F2/O opent ook Opnames. Een afstandsbediening met een herkende opnameknop (`XF86Record`) neemt het huidige programma op; R doet hetzelfde. De knoppen zijn ook met de muis aanklikbaar. Via beheer kun je plannen annuleren, lopende opnames stoppen, bestanden downloaden en oude opnames definitief verwijderen.
+Op de tv: druk vanuit elke zender op **Menu** (of F2/O) om het zijmenu te openen. In de zenderlijst opent **links** vanuit de eerste kolom ook het menu. Kies **Zenders**, **Opnames** of **Programmagids / opnemen** met omhoog/omlaag en druk OK. De programmagids hoort bij de geselecteerde zender, ook als die op de onderste rij staat. **Terug** of opnieuw **Menu** sluit het menu en bewaart je zender en pagina; tijdens afspelen blijft de video doorlopen zolang je alleen het menu opent. In de gids plant OK het geselecteerde programma. In Opnames speelt OK het geselecteerde beschikbare bestand af. Tijdens terugkijken: OK pauzeert, links/rechts springen 30 seconden en Terug opent de opnamelijst. Een afstandsbediening met een herkende opnameknop (`XF86Record`) neemt het huidige programma op; R doet hetzelfde. De knoppen zijn ook met de muis aanklikbaar. Via beheer kun je plannen annuleren, lopende opnames stoppen, bestanden downloaden en oude opnames definitief verwijderen.
 
 De recorder gebruikt FFmpeg met `-c copy`: video en audio worden zonder hercodering in een `.ts`-bestand opgeslagen, met een lage CPU-belasting. De planner stopt op de EPG-eindtijd en controleert elke twee seconden de opslag. Bij minder dan 512 MiB vrije ruimte stopt de opname met een foutstatus; gedeeltelijke bestanden blijven beschikbaar. Providerstoringen of een vroegtijdig gesloten stream worden als mislukt gemeld; deze versie herverbindt niet automatisch. HTTP(S)-streams worden ondersteund; streams met aanvullende M3U-headeropties nog niet. Kijken en opnemen gebruiken aparte providerverbindingen, ook op dezelfde zender: je abonnement moet dit toestaan. EPG-tijden komen van je provider en kunnen afwijken van de uitzending.
 

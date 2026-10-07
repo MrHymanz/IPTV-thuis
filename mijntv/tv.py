@@ -21,7 +21,8 @@ class TV:
         self.recordings = recordings
         self.panel_mode = None
         self.panel_selected = 0
-        self.header_selected = None
+        self.menu_open = False
+        self.menu_selected = 0
         self.playing_recording = None
         self.display_settings = Display(store).settings()
         self.restart_requested = False
@@ -70,12 +71,7 @@ class TV:
         self.icon(storage, 'disk', 36).pack(side='left', padx=(0, 10))
         self.storage_label = self.label(storage, '', 17, color=MUTED)
         self.storage_label.pack(side='left')
-        self.home_actions = tk.Frame(self.home, bg=BG)
-        self.home_actions.pack(anchor='e', padx=60)
-        self.library_button = self.small_button(self.home_actions, 'Opnames', lambda: self.open_panel('recordings'))
-        self.library_button.pack(side='left', padx=8)
-        self.guide_button = self.small_button(self.home_actions, 'Programmagids / opnemen', lambda: self.open_panel('guide'))
-        self.guide_button.pack(side='left', padx=8)
+        self.small_button(header, '☰ Menu', self.toggle_menu).pack(side='right', padx=20)
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)
         self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 17, color=MUTED)
         self.subtitle.pack(anchor='w', padx=60, pady=(10, 25))
@@ -102,7 +98,7 @@ class TV:
         self.page_label.pack(side='left', padx=20)
         self.next = self.small_button(paging, 'Volgende →', lambda: self.change_page(1))
         self.next.pack(side='left', padx=20)
-        self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Tijdens kijken: pijltjes of CH+/CH− om te zappen', 17, color=MUTED).pack(pady=(0, 25))
+        self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Menu: opnames / programmagids', 17, color=MUTED).pack(pady=(0, 25))
         self.setup = self.label(self.home, '', 20, color=AMBER)
         self.banner = tk.Frame(self.content, bg=BG)
         banner_text = tk.Frame(self.banner, bg=BG)
@@ -123,6 +119,7 @@ class TV:
         self.panel_rows.pack(fill='both', expand=True, padx=60)
         self.small_button(self.panel, '← Terug naar zenders', self.go_home).pack(pady=20)
         self.small_button(self.banner, '● Opnemen', self.record_current).pack(side='right', padx=10, pady=14)
+        self.build_menu()
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
@@ -245,6 +242,8 @@ class TV:
             self.panel_selected = next((i for i, item in enumerate(self.panel_items) if item['id'] == old_recording),
                                        min(self.panel_selected, max(0, len(self.panel_items)-1)))
             self.render_panel()
+        if self.menu_open:
+            self.render_menu()
         self.root.after(5000, self.refresh)
 
     def programme_text(self):
@@ -266,15 +265,19 @@ class TV:
 
     def update_programme(self):
         text = self.programme_text()
-        width = max(200, int(self.screen_width * (1-self.display_settings['margin']/50))-120)
+        width = max(200, int(self.screen_width * (1-self.display_settings['margin']/50)
+                             * (.68 if self.menu_open else 1))-120)
         self.subtitle.configure(text=text, wraplength=width)
         self.banner_programme.configure(text=text, wraplength=max(200, width-350))
 
     def render(self):
         self.update_programme()
+        page_size = 6 if self.menu_open else 10
+        columns = 3 if self.menu_open else 5
+        page = self.selected // page_size
         for i,b in enumerate(self.buttons):
-            index = self.page*10+i
-            if index < len(self.channels):
+            index = page*page_size+i
+            if i < page_size and index < len(self.channels):
                 channel = self.channels[index]
                 url = channel.get('logo') or ''
                 image = self.logo_images.get(url)
@@ -284,15 +287,15 @@ class TV:
                     self.logo_requests.put(url)
                 b.configure(text=f'{index+1:02d} · {channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
                             image=image or '', compound='top', padx=8, pady=10,
-                            wraplength=max(80, int(((self.content.winfo_width() if self.content.winfo_width() > 1
-                                                  else self.screen_width * (1-self.display_settings['margin']/50))-100)/5-46)),
+                            wraplength=max(80, int(((self.home.winfo_width() if self.home.winfo_width() > 1
+                                                  else self.screen_width * (1-self.display_settings['margin']/50))-100)/columns-46)),
                             state='normal', highlightbackground=AMBER if index==self.selected else TILE,
                             bg='#304a5a' if index==self.selected else TILE)
                 b.grid()
             else:
                 b.grid_remove()
-        pages = max(1, math.ceil(len(self.channels)/10))
-        self.page_label.configure(text=f'Pagina {self.page+1} van {pages}')
+        pages = max(1, math.ceil(len(self.channels)/page_size))
+        self.page_label.configure(text=f'Pagina {page+1} van {pages}')
         self.previous.configure(state='normal' if self.page else 'disabled')
         self.next.configure(state='normal' if self.page+1<pages else 'disabled')
         if not self.channels:
@@ -312,10 +315,135 @@ class TV:
         else:
             self.setup.pack_forget()
 
-    def render_header(self):
-        for index, button in enumerate((self.library_button, self.guide_button)):
-            button.configure(bg='#304a5a' if self.header_selected == index else TILE,
-                             fg=AMBER if self.header_selected == index else WHITE)
+    @staticmethod
+    def rounded_box(canvas, x, y, box_width, box_height, radius, **options):
+        points = (x+radius, y, x+box_width-radius, y, x+box_width, y, x+box_width, y+radius,
+                  x+box_width, y+box_height-radius, x+box_width, y+box_height, x+box_width-radius, y+box_height,
+                  x+radius, y+box_height, x, y+box_height, x, y+box_height-radius, x, y+radius, x, y)
+        return canvas.create_polygon(points, smooth=True, splinesteps=24, **options)
+
+    def build_menu(self):
+        self.menu_color = '#0e1e32'
+        self.menu = tk.Frame(self.content, bg=self.menu_color)
+        tk.Frame(self.menu, bg='#29415b', width=1).pack(side='right', fill='y')
+        title = self.label(self.menu, 'IPTV thuis', 33, bold=True)
+        title.configure(bg=self.menu_color)
+        title.pack(anchor='w', padx=int(34*self.scale), pady=(int(32*self.scale), int(42*self.scale)))
+        self.menu_buttons = []
+        for index in range(3):
+            card = tk.Canvas(self.menu, bg=self.menu_color, height=int(100*self.scale),
+                             highlightthickness=0, takefocus=False, cursor='hand2')
+            card.pack(fill='x', padx=int(18*self.scale), pady=int(7*self.scale))
+            card.bind('<Button-1>', lambda event, index=index: self.menu_choose(index))
+            card.bind('<Configure>', lambda event, index=index: self.draw_menu_card(self.menu_buttons[index], index))
+            self.menu_buttons.append(card)
+        tk.Frame(self.menu, bg='#29415b', height=1).pack(fill='x', padx=int(34*self.scale), pady=int(25*self.scale))
+        self.menu_hint = self.label(self.menu, '', 17, color='#9fb6d2')
+        self.menu_hint.configure(bg=self.menu_color, anchor='w')
+        self.menu_hint.pack(anchor='w', fill='x', padx=int(34*self.scale))
+        close = self.small_button(self.menu, '← Sluiten', self.close_menu)
+        close.configure(bg=self.menu_color, activebackground='#20364f', fg=MUTED, relief='flat')
+        close.pack(side='bottom', anchor='w', padx=int(24*self.scale), pady=int(15*self.scale))
+        hint = self.label(self.menu, '↑ ↓  Kiezen     OK  Openen\nTerug / Menu  Sluiten', 15, color='#b3c4d8')
+        hint.configure(bg=self.menu_color)
+        hint.pack(side='bottom', anchor='w', padx=int(34*self.scale), pady=int(12*self.scale))
+
+    def draw_menu_card(self, card, index):
+        card.delete('all')
+        width, height = card.winfo_width(), card.winfo_height()
+        if width < 10 or height < 10:
+            return
+        scale = self.scale
+        selected = index == self.menu_selected
+        x, y, radius = 5*scale, 5*scale, 12*scale
+        if selected:
+            self.rounded_box(card, 1*scale, 1*scale, width-2*scale, height-2*scale,
+                             radius+4*scale, fill='#283348', outline='')
+        self.rounded_box(card, x, y, width-2*x, height-2*y, radius,
+                         fill='#443725' if selected else self.menu_color,
+                         outline='#ffce66' if selected else '', width=3*scale)
+        color = '#ffda83' if selected else WHITE
+        # Draw consistent line icons instead of relying on installed symbol fonts.
+        cx, cy = 40*scale, height/2
+        def line(*points):
+            card.create_line(*points, fill=color, width=2.5*scale, capstyle='round', joinstyle='round')
+        if index == 0:
+            card.create_rectangle(cx-17*scale, cy-14*scale, cx+17*scale, cy+9*scale,
+                                  outline=color, width=2.5*scale)
+            line(cx, cy+9*scale, cx, cy+16*scale)
+            line(cx-9*scale, cy+16*scale, cx+9*scale, cy+16*scale)
+        elif index == 1:
+            card.create_oval(cx-17*scale, cy-17*scale, cx+17*scale, cy+17*scale,
+                             outline=color, width=2.5*scale)
+            card.create_oval(cx-6*scale, cy-6*scale, cx+6*scale, cy+6*scale,
+                             outline='', fill=color)
+        else:
+            card.create_rectangle(cx-16*scale, cy-14*scale, cx+16*scale, cy+17*scale,
+                                  outline=color, width=2.5*scale)
+            line(cx-16*scale, cy-5*scale, cx+16*scale, cy-5*scale)
+            for offset in (-8, 8):
+                line(cx+offset*scale, cy-19*scale, cx+offset*scale, cy-10*scale)
+            for col in (-8, 0, 8):
+                for row in (2, 10):
+                    card.create_rectangle(cx+col*scale-1.5*scale, cy+row*scale-1.5*scale,
+                                          cx+col*scale+1.5*scale, cy+row*scale+1.5*scale,
+                                          outline='', fill=color)
+        title = ('Zenders', 'Opnames', 'Programmagids /\nopnemen')[index]
+        card.create_text(80*scale, cy, text=title, anchor='w', justify='left',
+                         fill=WHITE, font=('DejaVu Sans', int(23*scale)),
+                         width=max(40, width-100*scale))
+
+    def toggle_menu(self):
+        if self.menu_open:
+            self.close_menu()
+            return
+        self.menu_open = True
+        self.menu_selected = {'recordings': 1, 'guide': 2}.get(self.panel_mode, 0)
+        self.menu.place(relx=0, rely=0, relwidth=.32, relheight=1)
+        self.menu.lift()
+        if not self.watching and not self.panel_mode:
+            self.layout_home()
+        self.render_menu()
+
+    def close_menu(self):
+        self.menu_open = False
+        self.menu.place_forget()
+        if not self.watching and not self.panel_mode:
+            self.layout_home()
+
+    def layout_home(self):
+        columns = 3 if self.menu_open else 5
+        self.home.place(relx=.32 if self.menu_open else 0, rely=0,
+                        relwidth=.68 if self.menu_open else 1, relheight=1)
+        for button in self.buttons:
+            button.grid_remove()
+        for col in range(5):
+            self.tiles.columnconfigure(col, weight=1 if col < columns else 0,
+                                       uniform='channels' if col < columns else '')
+        for index, button in enumerate(self.buttons):
+            if index < (6 if self.menu_open else 10):
+                button.grid_configure(row=index//columns, column=index%columns)
+            else:
+                button.grid_remove()
+        self.root.update_idletasks()
+        self.render()
+
+    def render_menu(self):
+        for index, button in enumerate(self.menu_buttons):
+            self.draw_menu_card(button, index)
+        channel = self.channels[self.selected]['label'] if self.channels else 'Geen zender geselecteerd'
+        self.menu_hint.configure(text='Voor de geselecteerde zender:\n' + channel
+                                 if self.menu_selected == 2 else 'Opnames en programmagids\nvanuit elke zender bereikbaar.',
+                                 wraplength=int(290*self.scale))
+
+    def menu_choose(self, index=None):
+        if index is not None:
+            self.menu_selected = index
+        self.close_menu()
+        if self.menu_selected == 0:
+            self.go_home()
+        else:
+            self.open_panel('recordings' if self.menu_selected == 1 else 'guide')
 
     def record_current(self):
         if not self.recordings or not self.channels or self.playing_recording:
@@ -334,8 +462,6 @@ class TV:
             self.show_error('Voeg eerst zenders toe via de beheerpagina.')
             return
         self.go_home()
-        self.header_selected = None
-        self.render_header()
         self.panel_mode, self.panel_selected = mode, 0
         try:
             if mode == 'guide':
@@ -403,7 +529,7 @@ class TV:
             self.show_error(str(error) if isinstance(error, ValueError) else 'Opname niet bereikbaar.')
 
     def change_page(self, delta):
-        if not self.channels:
+        if self.menu_open or not self.channels:
             return
         page = max(0, min(math.ceil(len(self.channels)/10)-1, self.page+delta))
         self.selected = min(page*10+self.selected%10, len(self.channels)-1)
@@ -411,7 +537,7 @@ class TV:
         self.render()
 
     def choose(self, index):
-        if index >= len(self.channels):
+        if self.menu_open or index >= len(self.channels):
             return
         channel = self.channels[index]
         if not channel['available']:
@@ -465,8 +591,7 @@ class TV:
         self.watching = False
         self.playing_recording = None
         self.panel_mode = None
-        self.header_selected = None
-        self.render_header()
+        self.close_menu()
         self.panel.place_forget()
         self.loading = False
         if self.player:
@@ -483,6 +608,8 @@ class TV:
     def show_banner(self, seconds=4):
         self.banner.place(relx=0, rely=1, anchor='sw', relwidth=1)
         self.banner.lift()
+        if self.menu_open:
+            self.menu.lift()
         self.message_until = time.monotonic()+seconds
 
     def show_error(self, text):
@@ -558,7 +685,16 @@ class TV:
             self.record_current()
             return 'break'
         if key in ('Menu', 'XF86MenuKB', 'F2', 'o', 'O'):
-            self.open_panel('recordings')
+            self.toggle_menu()
+            return 'break'
+        if getattr(self, 'menu_open', False):
+            if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Right'):
+                self.close_menu()
+            elif key in ('Up', 'Down'):
+                self.menu_selected = max(0, min(2, self.menu_selected + (-1 if key == 'Up' else 1)))
+                self.render_menu()
+            elif key in ('Return', 'KP_Enter', 'space'):
+                self.menu_choose()
             return 'break'
         if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_recording', None):
             self.open_panel('recordings')
@@ -585,20 +721,9 @@ class TV:
                 self.zap(-1)
             elif key in ('Return','KP_Enter','space'):
                 self.show_banner()
-        elif getattr(self, 'header_selected', None) is not None:
-            if key in ('Return', 'KP_Enter', 'space'):
-                self.open_panel('recordings' if self.header_selected == 0 else 'guide')
-            elif key in ('Left', 'Right'):
-                self.header_selected = 0 if key == 'Left' else 1
-                self.render_header()
-            elif key == 'Down':
-                self.header_selected = None
-                self.render_header()
-                self.render()
         elif self.channels:
-            if key == 'Up' and self.selected % 10 < 5:
-                self.header_selected = 0
-                self.render_header()
+            if key == 'Left' and self.selected % 5 == 0:
+                self.toggle_menu()
                 return 'break'
             if key in ('Return','KP_Enter','space'):
                 self.choose(self.selected)
