@@ -10,23 +10,33 @@ from .server import AdminServer, credentials
 from .store import Store
 
 
+PLAYLIST_REFRESH_SECONDS = 6 * 60 * 60
+PLAYLIST_RETRY_SECONDS = 15 * 60
+
+
 def refresh_loop(store, stop):
     recovered = store.cleanup_imports()
     if recovered:
         print(f'Opgeruimde afgebroken imports: {recovered}', flush=True)
+    retry_at, previous_source = 0, None
     while not stop.is_set():
         source = store.setting('source')
+        if source != previous_source:
+            retry_at, previous_source = 0, source
         try:
             age = time.time() - float(store.setting('refreshed_at', '0'))
         except ValueError:
-            age = 6 * 60 * 60
-        if source and age >= 6 * 60 * 60:
+            age = PLAYLIST_REFRESH_SECONDS
+        if source and age >= PLAYLIST_REFRESH_SECONDS and time.monotonic() >= retry_at:
             try:
-                store.refresh_source()
+                count = store.refresh_source()
+                retry_at = 0
+                print(f'Zenderlijst automatisch vernieuwd: {count} zenders.', flush=True)
             except Exception:
                 # Leave working catalog untouched; never log provider credentials.
-                print('Automatisch vernieuwen mislukt; de bestaande zenderlijst blijft beschikbaar.', flush=True)
-        if stop.wait(6 * 60 * 60):
+                retry_at = time.monotonic() + PLAYLIST_RETRY_SECONDS
+                print('Automatisch vernieuwen mislukt; de bestaande zenderlijst blijft beschikbaar. Nieuwe poging over 15 minuten.', flush=True)
+        if stop.wait(60):
             return
 
 
