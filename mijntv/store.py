@@ -171,6 +171,12 @@ class Store:
                     id TEXT PRIMARY KEY, label TEXT NOT NULL, position INTEGER NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS favorite_epg (id TEXT PRIMARY KEY, epg_id TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS favorite_source (id TEXT PRIMARY KEY, source_id TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS favorite_backups (
+                    favorite_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+                    PRIMARY KEY(favorite_id,channel_id)
+                );
                 CREATE TABLE IF NOT EXISTS epg_programmes (
                     epg_id TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL, title TEXT NOT NULL,
                     PRIMARY KEY(epg_id,start)
@@ -178,7 +184,32 @@ class Store:
             ''')
             if 'logo' not in {row[1] for row in db.execute('PRAGMA table_info(channels)')}:
                 db.execute("ALTER TABLE channels ADD COLUMN logo TEXT NOT NULL DEFAULT ''")
+            indexed = db.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='channels' AND sql LIKE '%trim(tvg_id)%'").fetchone()
+            if not indexed:
+                db.execute('CREATE INDEX IF NOT EXISTS channels_epg_lookup ON channels(trim(tvg_id))')
+            self._merge_favorites(db)
         os.chmod(self.path, 0o600)
+
+    @staticmethod
+    def _merge_favorites(db):
+        db.execute("""INSERT OR IGNORE INTO favorite_epg SELECT f.id,trim(c.tvg_id)
+                      FROM favorites f JOIN channels c ON c.id=f.id
+                      WHERE trim(c.tvg_id)<>'' AND c.manual=0""")
+        seen = {}
+        rows = db.execute('''SELECT f.id,e.epg_id FROM favorites f LEFT JOIN favorite_epg e ON e.id=f.id
+                             ORDER BY f.position,f.rowid''').fetchall()
+        for row in rows:
+            identity = row['epg_id']
+            if identity and identity in seen:
+                canonical = seen[identity]
+                db.execute('INSERT OR IGNORE INTO favorite_backups VALUES (?,?)', (canonical,row['id']))
+                db.execute('INSERT OR IGNORE INTO favorite_backups SELECT ?,channel_id FROM favorite_backups WHERE favorite_id=?',
+                           (canonical,row['id']))
+                db.execute('DELETE FROM favorites WHERE id=?', (row['id'],))
+                db.execute('DELETE FROM favorite_epg WHERE id=?', (row['id'],))
+                db.execute('DELETE FROM favorite_backups WHERE favorite_id=?', (row['id'],))
+            elif identity:
+                seen[identity] = row['id']
 
     @contextmanager
     def connect(self):
@@ -244,11 +275,13 @@ class Store:
                     # Build the ID index once after loading instead of updating
                     # random index pages for every row on a mechanical disk.
                     db.execute(f'CREATE UNIQUE INDEX {staging}_id ON {staging}(id)')
+                    db.execute(f'CREATE INDEX {staging}_epg ON {staging}(trim(tvg_id))')
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
                     db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('source', source))
                     db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('refreshed_at', str(time.time())))
+                    self._merge_favorites(db)
                 return count
             finally:
                 with self.connect() as db:
@@ -325,24 +358,62 @@ class Store:
             db.executemany('UPDATE channels SET logo=? WHERE id=?', found)
         return len(found)
 
+    def remember_source(self, favorite_id, source_id):
+        favorite = next((f for f in self.favorites(playback=True) if f['id'] == favorite_id), None)
+        if not favorite or source_id not in {source['id'] for source in favorite['sources']}:
+            return
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO favorite_source VALUES (?,?)', (favorite_id, source_id))
+
     def favorites(self, playback=False):
         with self.connect() as db:
-            rows = db.execute('''SELECT f.id,f.label,f.position,c.name,c.group_name,c.url,c.logo
-                                 FROM favorites f LEFT JOIN channels c ON f.id=c.id ORDER BY f.position''')
+            rows = db.execute('''SELECT f.id,f.label,f.position,c.name,c.group_name,c.url,c.logo,
+                                 COALESCE(e.epg_id,'') AS epg_id
+                                 FROM favorites f LEFT JOIN channels c ON f.id=c.id
+                                 LEFT JOIN favorite_epg e ON e.id=f.id ORDER BY f.position''').fetchall()
+            keys = sorted({row['epg_id'] for row in rows if row['epg_id']})
+            candidates = {}
+            if keys:
+                for row in db.execute('SELECT id,group_name,url,trim(tvg_id) AS epg_id FROM channels WHERE trim(tvg_id) IN ('+
+                                      ','.join('?' for _ in keys)+') ORDER BY group_name,id', keys):
+                    candidates.setdefault(row['epg_id'], []).append(dict(row))
+            pins = {}
+            for row in db.execute('SELECT favorite_id,channel_id FROM favorite_backups ORDER BY rowid'):
+                pins.setdefault(row['favorite_id'], []).append(row['channel_id'])
+            remembered = dict(db.execute('SELECT id,source_id FROM favorite_source').fetchall())
             result = []
             for row in rows:
                 item = dict(row)
-                item['available'] = bool(item['url'])
-                if not playback:
+                preferred = pins.get(item['id'], [])
+                alternatives = [c for c in candidates.get(item['epg_id'], [])
+                                if c['id'] != item['id'] and (c['group_name'] != item['group_name']
+                                                             or c['id'] in preferred)]
+                alternatives.sort(key=lambda c: (preferred.index(c['id']) if c['id'] in preferred else len(preferred),
+                                                  c['group_name'],c['id']))
+                sources, used = [], set()
+                primary = {'id':item['id'], 'group_name':item['group_name'], 'url':item['url']}
+                for source in [primary]+alternatives:
+                    if source['url'] and source['url'] not in used:
+                        used.add(source['url'])
+                        sources.append(source)
+                saved = remembered.get(item['id'])
+                sources.sort(key=lambda source: source['id'] != saved)
+                item['available'] = bool(sources)
+                item['source_count'] = len(sources)
+                item['source_groups'] = list(dict.fromkeys(source['group_name'] for source in sources))
+                if playback:
+                    item['sources'] = sources
+                    item['url'] = sources[0]['url'] if sources else ''
+                else:
                     del item['url']
                     if item['logo']:
                         version = hashlib.sha256(item['logo'].encode()).hexdigest()[:12]
                         item['logo'] = '/api/logos/' + item['id'] + '?v=' + version
                 result.append(item)
-            guide = self.programmes()
-            for item in result:
-                item['epg'] = guide.get(item['id'], {'now': None, 'next': None})
-            return result
+        guide = self.programmes()
+        for item in result:
+            item['epg'] = guide.get(item['id'], {'now': None, 'next': None})
+        return result
 
     def programmes(self, now=None):
         now = time.time() if now is None else now
@@ -354,7 +425,7 @@ class Store:
                 rows = db.execute(f'''SELECT f.id,p.start,p.end,p.title FROM favorites f
                     LEFT JOIN channels c ON c.id=f.id
                     LEFT JOIN epg_programmes p ON p.rowid=(SELECT rowid FROM epg_programmes
-                       WHERE epg_id=trim(c.tvg_id) AND {condition} ORDER BY start {direction} LIMIT 1)''', arguments)
+                       WHERE epg_id=COALESCE((SELECT epg_id FROM favorite_epg WHERE id=f.id),trim(c.tvg_id)) AND {condition} ORDER BY start {direction} LIMIT 1)''', arguments)
                 for row in rows:
                     item = result.setdefault(row['id'], {'now': None, 'next': None})
                     if row['title'] is not None:
@@ -363,12 +434,20 @@ class Store:
 
     def add_favorite(self, channel_id, label=''):
         with self.connect() as db:
-            channel = db.execute('SELECT name FROM channels WHERE id=?', (channel_id,)).fetchone()
+            channel = db.execute('SELECT name,trim(tvg_id) AS epg_id,manual FROM channels WHERE id=?', (channel_id,)).fetchone()
             if not channel:
                 raise ValueError('Deze zender bestaat niet meer in de lijst.')
+            self.label(label or channel['name'])
+            if channel['epg_id'] and not channel['manual']:
+                existing = db.execute('SELECT f.id FROM favorites f JOIN favorite_epg e ON e.id=f.id WHERE e.epg_id=? ORDER BY f.position LIMIT 1', (channel['epg_id'],)).fetchone()
+                if existing:
+                    if existing['id'] != channel_id:
+                        db.execute('INSERT OR IGNORE INTO favorite_backups VALUES (?,?)', (existing['id'],channel_id))
+                    return
             position = db.execute('SELECT COALESCE(MAX(position),-1)+1 FROM favorites').fetchone()[0]
             db.execute('INSERT OR IGNORE INTO favorites VALUES (?,?,?)',
                        (channel_id, self.label(label or channel[0]), position))
+            self._merge_favorites(db)
 
     @staticmethod
     def label(value):
@@ -385,6 +464,9 @@ class Store:
     def remove(self, channel_id):
         with self.connect() as db:
             db.execute('DELETE FROM favorites WHERE id=?', (channel_id,))
+            db.execute('DELETE FROM favorite_epg WHERE id=?', (channel_id,))
+            db.execute('DELETE FROM favorite_backups WHERE favorite_id=?', (channel_id,))
+            db.execute('DELETE FROM favorite_source WHERE id=?', (channel_id,))
             db.execute('DELETE FROM channels WHERE id=? AND manual=1', (channel_id,))
 
     def reorder(self, ids):

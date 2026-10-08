@@ -81,8 +81,9 @@ class Recordings:
 
     def guide(self, channel_id):
         with self.store.connect() as db:
-            channel = db.execute('''SELECT f.label,c.tvg_id FROM favorites f JOIN channels c ON c.id=f.id
-                                    WHERE f.id=?''', (channel_id,)).fetchone()
+            channel = db.execute('''SELECT f.label,COALESCE(e.epg_id,c.tvg_id) AS tvg_id FROM favorites f
+                                    LEFT JOIN channels c ON c.id=f.id
+                                    LEFT JOIN favorite_epg e ON e.id=f.id WHERE f.id=?''', (channel_id,)).fetchone()
             if not channel:
                 raise ValueError('Kies een zender uit de favorieten.')
             rows = db.execute('''SELECT start,end,title FROM epg_programmes

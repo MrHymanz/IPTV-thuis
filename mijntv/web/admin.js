@@ -50,7 +50,7 @@ function renderFavorites() {
     const down = button('↓', () => move(1)); down.setAttribute('aria-label', f.label + ' omlaag'); down.disabled = i === favorites.length - 1;
     const rename = button('Naam', () => { const label = prompt('Naam op de televisie:', f.label); if (label !== null) mutate('/api/favorites/rename', {id:f.id, label}, 'Naam opgeslagen.'); });
     const remove = button('Verwijder', () => { if (confirm(`${f.label} uit de favorieten verwijderen?`)) mutate('/api/favorites/remove', {id:f.id}, 'Favoriet verwijderd.'); });
-    actions.append(up, down, rename, remove); row.append(handle, logo, title(`${i+1}. ${f.label}`, f.available ? (f.name || 'Eigen stream') : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
+    actions.append(up, down, rename, remove); row.append(handle, logo, title(`${i+1}. ${f.label}`, f.available ? ((f.name || 'Eigen stream') + (f.source_count > 1 ? ` · ${f.source_count} bronnen, automatisch omschakelen` : '')) : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
   });
 }
 function startFavoriteDrag(event, row, handle) {

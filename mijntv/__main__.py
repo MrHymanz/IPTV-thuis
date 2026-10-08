@@ -1,4 +1,5 @@
 import argparse
+import logging
 import getpass
 import os
 import signal
@@ -8,6 +9,7 @@ import time
 
 from .server import AdminServer, credentials
 from .store import Store
+from .diagnostics import configure_logging
 
 
 PLAYLIST_REFRESH_SECONDS = 6 * 60 * 60
@@ -29,11 +31,14 @@ def refresh_loop(store, stop):
             age = PLAYLIST_REFRESH_SECONDS
         if source and age >= PLAYLIST_REFRESH_SECONDS and time.monotonic() >= retry_at:
             try:
+                logging.getLogger('mijntv.stream').info('playlist_refresh_start')
                 count = store.refresh_source()
                 retry_at = 0
                 print(f'Zenderlijst automatisch vernieuwd: {count} zenders.', flush=True)
+                logging.getLogger('mijntv.stream').info('playlist_refresh_complete count=%s', count)
             except Exception:
                 # Leave working catalog untouched; never log provider credentials.
+                logging.getLogger('mijntv.stream').info('playlist_refresh_failed')
                 retry_at = time.monotonic() + PLAYLIST_RETRY_SECONDS
                 print('Automatisch vernieuwen mislukt; de bestaande zenderlijst blijft beschikbaar. Nieuwe poging over 15 minuten.', flush=True)
         if stop.wait(60):
@@ -51,6 +56,7 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     store = Store(args.data_dir)
+    configure_logging(args.data_dir)
     password = None
     if args.reset_password:
         password = getpass.getpass('Nieuw beheerwachtwoord (minimaal 12 tekens): ')

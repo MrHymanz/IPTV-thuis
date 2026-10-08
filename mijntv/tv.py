@@ -1,5 +1,6 @@
 """Large-button TV interface for an X11 Linux session."""
 import math
+import logging
 import io
 import threading
 from pathlib import Path
@@ -51,6 +52,12 @@ class TV:
         self.channels, self.selected, self.page = [], 0, 0
         self.watching, self.player, self.pending_zap = False, None, None
         self.message_until = 0
+        self.recovery_attempts = []
+        self.recovery_pending = None
+        self.active_source_id = None
+        self.tried_sources = set()
+        self.last_diagnostic = 0
+        self.last_stream_sample = 0
         self.content = tk.Frame(self.root, bg=BG)
         margin = self.display_settings['margin'] / 100
         self.content.place(relx=margin, rely=margin, relwidth=1-2*margin, relheight=1-2*margin)
@@ -543,6 +550,11 @@ class TV:
         if not channel['available']:
             self.show_error('Deze zender is niet beschikbaar. Kies een andere zender.')
             return
+        self.recovery_pending = None
+        self.active_source_id = None
+        self.tried_sources = set()
+        if index != self.selected:
+            self.recovery_attempts = []
         self.selected, self.page = index, index//10
         self.watching = True
         self.playing_recording = None
@@ -566,11 +578,22 @@ class TV:
                 self.player = Player(self.video.winfo_id())
                 self.player.command('set_property', 'volume', self.volume)
                 self.player.command('set_property', 'mute', self.muted)
+            if not self.playing_recording:
+                sources = channel.get('sources') or [channel]
+                source = next((item for item in sources if item.get('id') == getattr(self, 'active_source_id', None)), sources[0])
+                self.source_health = None
+                self.active_source_id = source.get('id')
+                self.tried_sources.add(source.get('id'))
+                channel = source
+            self.player.watchdog_enabled = not self.playing_recording
             self.player.play(channel['url'])
             self.root.focus_force()
             self.loading_started = time.monotonic()
             self.loading = True
         except (RuntimeError, OSError):
+            if not self.playing_recording:
+                self.loading_started = time.monotonic() - 51
+                self.loading = True
             self.show_error('De zender kon niet starten. Kies een andere zender of druk op Terug.')
 
     def zap(self, delta):
@@ -589,6 +612,7 @@ class TV:
             self.root.after_cancel(self.pending_zap)
             self.pending_zap = None
         self.watching = False
+        self.recovery_pending = None
         self.playing_recording = None
         self.panel_mode = None
         self.close_menu()
@@ -617,8 +641,66 @@ class TV:
         self.error.place(relx=.5, rely=.5, anchor='center')
         self.error.lift()
 
-    def poll_player(self):
+    def remember_healthy_source(self, snapshot):
+        position = snapshot.get('time-pos')
+        healthy = (isinstance(position, (int, float))
+                   and snapshot.get('pause') is False
+                   and snapshot.get('core-idle') is False
+                   and snapshot.get('seeking') is False
+                   and snapshot.get('paused-for-cache') is False
+                   and (snapshot.get('aid') is None or
+                        (snapshot.get('current-ao') and snapshot.get('audio-out-params/samplerate'))))
+        previous = getattr(self, 'source_health', None)
+        self.source_health = position if healthy else None
+        if healthy and previous is not None and position > previous + 1:
+            channel = self.channels[self.selected]
+            source_id = self.active_source_id
+            if getattr(self, 'remembered_source', None) != (channel['id'], source_id):
+                self.store.remember_source(channel['id'], source_id)
+                # Keep the current screen's cached sources in the same order as the database.
+                channel['sources'].sort(key=lambda source: source['id'] != source_id)
+                self.remembered_source = (channel['id'], source_id)
+                logging.getLogger('mijntv.stream').info('stream_preferred source_id=%s', source_id)
+
+    def recover_stream(self, reason, snapshot=None):
+        if not self.watching or self.playing_recording or not self.channels:
+            return
+        now = time.monotonic()
+        self.recovery_attempts = [stamp for stamp in self.recovery_attempts if now-stamp < 600]
+        if self.recovery_attempts and now-self.recovery_attempts[-1] < 60:
+            self.recovery_pending = (reason, snapshot)
+            return
+        log = logging.getLogger('mijntv.stream')
+        log.info('stream_fault reason=%s channel_index=%s snapshot=%s', reason, self.selected, snapshot)
+        if len(self.recovery_attempts) >= max(3, min(8, len(self.channels[self.selected].get('sources', [])))):
+            self.show_error('De uitzending blijft onderbroken. Kies een andere zender of druk op Terug.')
+            return
+        self.recovery_pending = None
+        sources = self.channels[self.selected].get('sources') or [self.channels[self.selected]]
+        tried = getattr(self, 'tried_sources', set())
+        alternative = next((source for source in sources if source.get('id') and source['id'] not in tried), None)
+        self.recovery_attempts.append(now)
+        if alternative:
+            self.active_source_id = alternative['id']
+            log.info('stream_fallback source_id=%s group=%s', alternative['id'], alternative.get('group_name', ''))
+        log.info('stream_reopen attempt=%s', len(self.recovery_attempts))
+        self.show_error('Uitzending onderbroken. Verbinding wordt hersteld…')
         if self.player:
+            self.player.close()
+            self.player = None
+        self.start_stream(self.channels[self.selected])
+
+    def poll_player(self):
+        if self.recovery_pending and self.watching and time.monotonic()-self.recovery_attempts[-1] >= 60:
+            reason, snapshot = self.recovery_pending
+            self.recovery_pending = None
+            self.recover_stream(reason, snapshot)
+        if self.player:
+            if self.watching and not self.playing_recording and time.monotonic()-self.last_stream_sample >= 15:
+                self.last_stream_sample = time.monotonic()
+                snapshot = self.player.snapshot()
+                logging.getLogger('mijntv.stream').info('stream_sample channel_index=%s snapshot=%s', self.selected, snapshot)
+                self.remember_healthy_source(snapshot)
             while True:
                 try:
                     event = self.player.events.get_nowait()
@@ -626,7 +708,15 @@ class TV:
                     break
                 if not self.watching or self.pending_zap:
                     continue
-                if event['event']=='file-loaded':
+                if event['event'] == 'diagnostic-error':
+                    now = time.monotonic()
+                    if now-self.last_diagnostic >= 5:
+                        self.last_diagnostic = now
+                        logging.getLogger('mijntv.stream').info('player_error category=%s', event['category'])
+                elif event['event'] == 'stalled':
+                    self.recover_stream('stalled', event['snapshot'])
+                elif event['event']=='file-loaded':
+                    self.recovery_pending = None
                     self.loading = False
                     self.root.focus_force()
                     self.error.place_forget()
@@ -640,10 +730,14 @@ class TV:
                     if self.playing_recording:
                         self.open_panel('recordings')
                         continue
-                    self.show_error('Geen uitzending beschikbaar. Kies een andere zender of druk op Terug.')
+                    self.recover_stream(event.get('reason') or 'disconnected', self.player.snapshot())
+                    break
         if self.watching and getattr(self,'loading',False) and time.monotonic()-self.loading_started>50:
             self.loading = False
-            self.show_error('Verbinden duurt te lang. Kies een andere zender of druk op Terug.')
+            if self.playing_recording:
+                self.show_error('Verbinden duurt te lang. Kies een andere opname of druk op Terug.')
+            else:
+                self.recover_stream('loading_timeout', self.player.snapshot() if self.player else None)
         if self.watching and time.monotonic()>self.message_until:
             self.banner.place_forget()
         self.root.after(100, self.poll_player)
