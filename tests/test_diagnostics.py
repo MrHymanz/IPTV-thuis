@@ -28,12 +28,37 @@ class DiagnosticTests(unittest.TestCase):
             self.assertFalse(w.stalled({'aid':1,'time-pos':t,'current-ao':'alsa',
                                        'audio-out-params/samplerate':48000},t))
 
+    def test_no_audio_track_does_not_count_as_failed_audio(self):
+        w=StreamWatchdog();w.reset(0)
+        for t in range(0,100,2):
+            self.assertFalse(w.stalled({'aid':False,'time-pos':t,'current-ao':None},t))
+
     def test_intentional_pause_exempt_and_new_channel_resets(self):
         w=StreamWatchdog();w.reset(0)
         for t in range(0,120,2):
             self.assertFalse(w.stalled({'time-pos':1,'pause':True},t))
         w.reset(120)
         self.assertFalse(w.stalled({'time-pos':0},140))
+
+    def test_black_picture_advancing_clock_reports_once(self):
+        w=StreamWatchdog();w.reset(0)
+        for t in range(0,50,2):
+            self.assertFalse(w.stalled({'time-pos':t,'video-black':True,'video-checked-at':t},t))
+        self.assertTrue(w.stalled({'time-pos':50,'video-black':True,'video-checked-at':50},50))
+        self.assertEqual(w.reason,'black_picture')
+        self.assertFalse(w.stalled({'time-pos':70,'video-black':True,'video-checked-at':70},70))
+
+    def test_short_black_intervals_stale_samples_and_pause_are_exempt(self):
+        w=StreamWatchdog();w.reset(0)
+        for t in range(0,160,2):
+            black=t%40<20
+            self.assertFalse(w.stalled({'time-pos':t,'video-black':black,'video-checked-at':t},t))
+        w.reset(0)
+        for t in range(0,100,2):
+            self.assertFalse(w.stalled({'time-pos':t,'video-black':True,'video-checked-at':0},t))
+        w.reset(0)
+        for t in range(0,100,2):
+            self.assertFalse(w.stalled({'time-pos':1,'pause':True,'video-black':True,'video-checked-at':t},t))
 
     def test_snapshot_excludes_credentials_and_arbitrary_strings(self):
         value=safe_snapshot({'path':'https://user:secret@provider/stream',

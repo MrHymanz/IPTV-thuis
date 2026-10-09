@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 
+from .video_health import black_frame
 from .audio import audio_device
 from .diagnostics import PROPERTIES, StreamWatchdog, safe_snapshot
 
@@ -21,6 +22,7 @@ class Player:
         self.watchdog = StreamWatchdog()
         self.watchdog_enabled = True
         self.last_warning = 0
+        self.generation = 0
         self.monitor_active = False
         self.monitor_stop = threading.Event()
         self.directory = tempfile.TemporaryDirectory(prefix='iptv-')
@@ -55,6 +57,7 @@ class Player:
         self.reader.start()
         self.command('request_log_messages', 'warn')
         threading.Thread(target=self._monitor, daemon=True).start()
+        threading.Thread(target=self._monitor_picture, daemon=True).start()
 
     def _read(self):
         try:
@@ -107,17 +110,68 @@ class Player:
                     if not self.connection or self.process.poll() is not None:
                         continue
                     for key in PROPERTIES:
+                        if key.startswith('video-'):
+                            continue
                         self.connection.sendall((json.dumps({'command': ['get_property', key],
                                                             'request_id': 'health:'+key})+'\n').encode())
                 with self.status_lock:
                     values = dict(self.status)
                     if self.watchdog.stalled(values, time.monotonic()):
-                        self.events.put({'event': 'stalled', 'snapshot': safe_snapshot(values)})
+                        self.events.put({'event': 'stalled', 'reason': self.watchdog.reason, 'snapshot': safe_snapshot(values)})
             except (RuntimeError, OSError):
                 return
 
+    def check_picture(self):
+        with self.status_lock:
+            generation = self.generation
+            if self.status.get('pause') is True or self.status.get('core-idle') is not False:
+                return
+        path = os.path.join(self.directory.name, 'frame.jpg')
+        verified = False
+        try:
+            # A separate IPC connection keeps large captures out of the event reader.
+            with socket.socket(socket.AF_UNIX) as connection:
+                connection.settimeout(5)
+                connection.connect(self.socket_path)
+                connection.sendall((json.dumps({'command': ['screenshot-to-file', path, 'video'],
+                                                'request_id': 'picture'})+'\n').encode())
+                with connection.makefile('rb') as stream:
+                    for line in stream:
+                        response = json.loads(line)
+                        if response.get('request_id') == 'picture':
+                            if response.get('error') != 'success':
+                                return
+                            break
+                    else:
+                        return
+            black = black_frame(path)
+            with self.status_lock:
+                if generation == self.generation and self.monitor_active:
+                    self.status['video-black'] = black
+                    self.status['video-checked-at'] = time.monotonic()
+                    verified = True
+        except (ImportError, OSError, ValueError):
+            # Unknown picture status never certifies a source as healthy.
+            return
+        finally:
+            if not verified:
+                with self.status_lock:
+                    if generation == self.generation:
+                        self.status.pop('video-black', None)
+                        self.status.pop('video-checked-at', None)
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+
+    def _monitor_picture(self):
+        while not self.monitor_stop.wait(10):
+            if self.monitor_active and self.watchdog_enabled:
+                self.check_picture()
+
     def play(self, url):
         with self.status_lock:
+            self.generation += 1
             self.status.clear()
             self.watchdog.reset(time.monotonic())
         self.monitor_active = True
@@ -132,7 +186,9 @@ class Player:
         self.command('set_property', 'pause', False)
 
     def stop(self):
-        self.monitor_active = False
+        with self.status_lock:
+            self.generation += 1
+            self.monitor_active = False
         self.command('stop')
 
     def close(self):

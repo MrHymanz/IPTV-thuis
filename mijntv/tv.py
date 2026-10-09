@@ -582,6 +582,7 @@ class TV:
                 sources = channel.get('sources') or [channel]
                 source = next((item for item in sources if item.get('id') == getattr(self, 'active_source_id', None)), sources[0])
                 self.source_health = None
+                self.source_healthy_since = None
                 self.active_source_id = source.get('id')
                 self.tried_sources.add(source.get('id'))
                 channel = source
@@ -643,16 +644,25 @@ class TV:
 
     def remember_healthy_source(self, snapshot):
         position = snapshot.get('time-pos')
-        healthy = (isinstance(position, (int, float))
+        now = time.monotonic()
+        checked = snapshot.get('video-checked-at')
+        healthy = (snapshot.get('video-black') is False
+                   and isinstance(checked, (int, float)) and 0 <= now-checked <= 20
+                   and isinstance(position, (int, float))
                    and snapshot.get('pause') is False
                    and snapshot.get('core-idle') is False
                    and snapshot.get('seeking') is False
                    and snapshot.get('paused-for-cache') is False
-                   and (snapshot.get('aid') is None or
+                   and (snapshot.get('aid') is None or snapshot.get('aid') is False or
                         (snapshot.get('current-ao') and snapshot.get('audio-out-params/samplerate'))))
         previous = getattr(self, 'source_health', None)
         self.source_health = position if healthy else None
-        if healthy and previous is not None and position > previous + 1:
+        if not healthy:
+            self.source_healthy_since = None
+        elif getattr(self, 'source_healthy_since', None) is None:
+            self.source_healthy_since = now
+        if (healthy and previous is not None and position > previous + 1
+                and now-self.source_healthy_since >= 30):
             channel = self.channels[self.selected]
             source_id = self.active_source_id
             if getattr(self, 'remembered_source', None) != (channel['id'], source_id):
@@ -665,6 +675,9 @@ class TV:
     def recover_stream(self, reason, snapshot=None):
         if not self.watching or self.playing_recording or not self.channels:
             return
+        if reason == 'black_picture':
+            self.store.forget_source(self.channels[self.selected]['id'], self.active_source_id)
+            self.remembered_source = None
         now = time.monotonic()
         self.recovery_attempts = [stamp for stamp in self.recovery_attempts if now-stamp < 600]
         if self.recovery_attempts and now-self.recovery_attempts[-1] < 60:
@@ -714,7 +727,7 @@ class TV:
                         self.last_diagnostic = now
                         logging.getLogger('mijntv.stream').info('player_error category=%s', event['category'])
                 elif event['event'] == 'stalled':
-                    self.recover_stream('stalled', event['snapshot'])
+                    self.recover_stream(event.get('reason', 'stalled'), event['snapshot'])
                 elif event['event']=='file-loaded':
                     self.recovery_pending = None
                     self.loading = False

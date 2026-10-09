@@ -24,6 +24,24 @@ class FallbackTests(unittest.TestCase):
         self.primary=self.ids['NPO 1 FHD'];self.backup=self.ids['NPO1 4K']
         self.store.add_favorite(self.primary,'NPO 1')
 
+    def test_failed_preference_removal_does_not_clear_newer_choice(self):
+        self.store.remember_source(self.primary,self.backup)
+        self.store.forget_source(self.primary,self.primary)
+        self.assertEqual(self.store.favorites(playback=True)[0]['sources'][0]['id'],self.backup)
+        self.store.forget_source(self.primary,self.backup)
+        self.assertEqual(self.store.favorites(playback=True)[0]['sources'][0]['id'],self.primary)
+
+    def test_startup_merging_uses_channel_id_lookup_after_import(self):
+        from unittest.mock import Mock
+        probe=Mock()
+        probe.execute.return_value.fetchall.return_value=[]
+        Store._merge_favorites(probe)
+        query=probe.execute.call_args_list[0].args[0]
+        with self.store.connect() as db:
+            plan=[row[3] for row in db.execute('EXPLAIN QUERY PLAN '+query)]
+        self.assertTrue(any('SEARCH c USING INDEX' in step for step in plan), plan)
+        self.assertFalse(any('SCAN c' in step for step in plan), plan)
+
     def test_preference_survives_restart_and_missing_source(self):
         self.store.remember_source(self.primary, self.backup)
         reopened = Store(self.directory.name)

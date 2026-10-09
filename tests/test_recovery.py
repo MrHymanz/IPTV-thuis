@@ -62,21 +62,46 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.tv.tried_sources,{'primary','backup'})
         self.assertEqual(self.tv.selected,0)
 
-    def test_only_advancing_healthy_source_is_remembered(self):
+    def test_only_advancing_visible_source_is_remembered(self):
         self.tv.store=Mock(); self.tv.active_source_id='backup'
         self.tv.channels=[{'id':'favorite','sources':[{'id':'primary'},{'id':'backup'}]}]
-        sample={'time-pos':10,'pause':False,'core-idle':False,'seeking':False,
-                'paused-for-cache':False,'aid':1,'current-ao':'alsa','audio-out-params/samplerate':48000}
-        self.tv.remember_healthy_source(sample)
-        self.tv.remember_healthy_source(sample)
+        base={'pause':False,'core-idle':False,'seeking':False,'paused-for-cache':False,
+              'aid':1,'current-ao':'alsa','audio-out-params/samplerate':48000}
+        def sample(t, black=False, checked=None):
+            with patch('mijntv.tv.time.monotonic',return_value=t):
+                self.tv.remember_healthy_source(dict(base, **{'time-pos':t,'video-black':black,
+                    'video-checked-at':t if checked is None else checked}))
+        sample(0);sample(15)
         self.tv.store.remember_source.assert_not_called()
-        self.tv.remember_healthy_source(dict(sample, **{'time-pos':25}))
+        sample(30)
         self.tv.store.remember_source.assert_called_once_with('favorite','backup')
         self.assertEqual(self.tv.channels[0]['sources'][0]['id'],'backup')
         self.tv.remembered_source=None
-        self.tv.remember_healthy_source(dict(sample, **{'time-pos':40,'current-ao':None}))
-        self.tv.remember_healthy_source(dict(sample, **{'time-pos':55}))
+        sample(45,True);sample(60,True);sample(90,True)
+        sample(100,checked=0);sample(120,black=None)
         self.assertEqual(self.tv.store.remember_source.call_count,1)
+        sample(130);sample(145)
+        self.assertEqual(self.tv.store.remember_source.call_count,1)
+        sample(160)
+        self.assertEqual(self.tv.store.remember_source.call_count,2)
+
+    def test_black_picture_switches_source_and_forgets_preference(self):
+        self.tv.store=Mock(); self.tv.channels[0]['id']='favorite'
+        self.tv.channels[0]['sources']=[{'id':'black','url':'one'},{'id':'healthy','url':'two'}]
+        self.tv.active_source_id='black';self.tv.tried_sources={'black'}
+        with patch('mijntv.tv.time.monotonic',return_value=100):
+            self.tv.recover_stream('black_picture',{'video-black':True})
+        self.assertEqual(self.tv.active_source_id,'healthy')
+        self.tv.store.forget_source.assert_called_once_with('favorite','black')
+        self.tv.start_stream.assert_called_once_with(self.tv.channels[0])
+
+    def test_black_preference_is_removed_even_during_retry_cooldown(self):
+        self.tv.store=Mock();self.tv.channels[0]['id']='favorite';self.tv.active_source_id='black'
+        self.tv.recovery_attempts=[100]
+        with patch('mijntv.tv.time.monotonic',return_value=110):
+            self.tv.recover_stream('black_picture',{})
+        self.tv.store.forget_source.assert_called_once_with('favorite','black')
+        self.tv.start_stream.assert_not_called()
 
     def test_home_and_recordings_are_never_restarted(self):
         self.tv.watching=False;self.recover(100)

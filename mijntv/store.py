@@ -192,8 +192,9 @@ class Store:
 
     @staticmethod
     def _merge_favorites(db):
+        # Keep favorites as the outer loop: scanning a cold, large catalog can exceed the boot timeout.
         db.execute("""INSERT OR IGNORE INTO favorite_epg SELECT f.id,trim(c.tvg_id)
-                      FROM favorites f JOIN channels c ON c.id=f.id
+                      FROM favorites f CROSS JOIN channels c ON c.id=f.id
                       WHERE trim(c.tvg_id)<>'' AND c.manual=0""")
         seen = {}
         rows = db.execute('''SELECT f.id,e.epg_id FROM favorites f LEFT JOIN favorite_epg e ON e.id=f.id
@@ -357,6 +358,10 @@ class Store:
                 raise ValueError('Het playlistadres is ondertussen gewijzigd.')
             db.executemany('UPDATE channels SET logo=? WHERE id=?', found)
         return len(found)
+
+    def forget_source(self, favorite_id, source_id):
+        with self.connect() as db:
+            db.execute('DELETE FROM favorite_source WHERE id=? AND source_id=?', (favorite_id, source_id))
 
     def remember_source(self, favorite_id, source_id):
         favorite = next((f for f in self.favorites(playback=True) if f['id'] == favorite_id), None)
