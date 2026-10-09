@@ -1,4 +1,5 @@
 """Large-button TV interface for an X11 Linux session."""
+from concurrent.futures import Future
 import math
 import logging
 import io
@@ -54,6 +55,7 @@ class TV:
         self.message_until = 0
         self.recovery_attempts = []
         self.recovery_pending = None
+        self.loading = False
         self.active_source_id = None
         self.tried_sources = set()
         self.last_diagnostic = 0
@@ -144,6 +146,14 @@ class TV:
             self.restart_requested = True
             if self.player:
                 self.player.close()
+            future = getattr(self, 'player_future', None)
+            if future is not None:
+                def close_prepared(result):
+                    try:
+                        result.result().close()
+                    except Exception:
+                        pass
+                future.add_done_callback(close_prepared)
             self.root.destroy()
             return
         self.root.after(2000, self.check_display)
@@ -550,6 +560,7 @@ class TV:
         if not channel['available']:
             self.show_error('Deze zender is niet beschikbaar. Kies een andere zender.')
             return
+        self.loading = False
         self.recovery_pending = None
         self.active_source_id = None
         self.tried_sources = set()
@@ -566,7 +577,7 @@ class TV:
         self.show_banner(60)
         if self.pending_zap:
             self.root.after_cancel(self.pending_zap)
-        self.pending_zap = self.root.after(200, lambda: self.start_stream(channel))
+        self.pending_zap = self.root.after(350, lambda: self.start_stream(channel))
 
     def start_stream(self, channel):
         self.pending_zap = None
@@ -575,7 +586,22 @@ class TV:
                 self.player.close()
                 self.player = None
             if not self.player:
-                self.player = Player(self.video.winfo_id())
+                future = getattr(self, 'player_future', None)
+                if future is None:
+                    future = self.player_future = Future()
+                    window_id = self.video.winfo_id()
+                    def create_player():
+                        try:
+                            future.set_result(Player(window_id))
+                        except Exception as error:
+                            future.set_exception(error)
+                    threading.Thread(target=create_player, daemon=True).start()
+                if not future.done():
+                    # Keep Tk free to accept more zap presses while mpv connects.
+                    self.pending_zap = self.root.after(50, lambda: self.start_stream(channel))
+                    return
+                self.player_future = None
+                self.player = future.result()
                 self.player.command('set_property', 'volume', self.volume)
                 self.player.command('set_property', 'mute', self.muted)
             if not self.playing_recording:
@@ -587,6 +613,7 @@ class TV:
                 self.tried_sources.add(source.get('id'))
                 channel = source
             self.player.watchdog_enabled = not self.playing_recording
+            logging.getLogger('mijntv.stream').info('stream_start channel_index=%s', self.selected)
             self.player.play(channel['url'])
             self.root.focus_force()
             self.loading_started = time.monotonic()

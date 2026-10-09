@@ -56,11 +56,43 @@ class RecoveryTests(unittest.TestCase):
         self.tv.volume=100;self.tv.muted=False;self.tv.root=Mock();self.tv.video=Mock()
         self.tv.player=None
         player=Mock()
+        from concurrent.futures import Future
+        self.tv.player_future=Future();self.tv.player_future.set_result(player)
         with patch('mijntv.tv.Player',return_value=player):
             TV.start_stream(self.tv,self.tv.channels[0])
         player.play.assert_called_once_with('two')
         self.assertEqual(self.tv.tried_sources,{'primary','backup'})
         self.assertEqual(self.tv.selected,0)
+
+    def test_zap_burst_only_loads_final_selection(self):
+        self.tv.channels=[{'id':str(i),'available':True,'label':str(i)} for i in range(20)]
+        self.tv.menu_open=False;self.tv.active_source_id=None;self.tv.pending_zap=None
+        self.tv.root=Mock();callbacks={}
+        def after(delay,callback):
+            handle=len(callbacks)+1;callbacks[handle]=callback;return handle
+        self.tv.root.after.side_effect=after
+        self.tv.root.after_cancel.side_effect=lambda handle: callbacks.pop(handle)
+        for name in ('error','home','banner','banner_label'):
+            setattr(self.tv,name,Mock())
+        self.tv.update_programme=Mock();self.tv.show_banner=Mock();self.tv.loading=True
+        for index in range(1,20):
+            self.tv.choose(index)
+        self.tv.start_stream.assert_not_called()
+        self.assertFalse(self.tv.loading)
+        self.assertEqual(len(callbacks),1)
+        next(iter(callbacks.values()))()
+        self.tv.start_stream.assert_called_once_with(self.tv.channels[19])
+
+    def test_startup_wait_does_not_block_latest_channel_selection(self):
+        from concurrent.futures import Future
+        self.tv.start_stream=TV.start_stream.__get__(self.tv,TV)
+        self.tv.player=None;self.tv.player_future=Future();self.tv.root=Mock();self.tv.video=Mock()
+        self.tv.start_stream({'url':'first'})
+        self.tv.root.after.assert_called_once()
+        self.tv.player_future.set_result(Mock())
+        self.tv.volume=100;self.tv.muted=False;self.tv.tried_sources=set()
+        self.tv.start_stream({'id':'latest','url':'last'})
+        self.tv.player.play.assert_called_once_with('last')
 
     def test_only_advancing_visible_source_is_remembered(self):
         self.tv.store=Mock(); self.tv.active_source_id='backup'
