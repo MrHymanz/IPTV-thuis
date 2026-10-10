@@ -8,6 +8,7 @@ import threading
 import time
 
 from .server import AdminServer, credentials
+from .maintenance import BACKGROUND_STARTUP_DELAY
 from .store import Store
 from .diagnostics import configure_logging
 
@@ -17,6 +18,12 @@ PLAYLIST_RETRY_SECONDS = 15 * 60
 
 
 def refresh_loop(store, stop):
+    if stop.wait(BACKGROUND_STARTUP_DELAY):
+        return
+    try:
+        store.optimize_catalog()
+    except Exception:
+        logging.getLogger('mijntv.stream').info('catalog_maintenance_failed')
     recovered = store.cleanup_imports()
     if recovered:
         print(f'Opgeruimde afgebroken imports: {recovered}', flush=True)

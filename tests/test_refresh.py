@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import Mock, patch
-from mijntv.__main__ import refresh_loop, PLAYLIST_REFRESH_SECONDS
+from mijntv.__main__ import refresh_loop, PLAYLIST_REFRESH_SECONDS, BACKGROUND_STARTUP_DELAY
 
 class RefreshTests(unittest.TestCase):
     def run_loop(self, ages, *, failure=False, sources=None, monotonic=None):
@@ -12,12 +12,21 @@ class RefreshTests(unittest.TestCase):
         store.setting.side_effect=setting
         if failure: store.refresh_source.side_effect=ValueError('private-provider-details')
         stop=Mock(); stop.is_set.return_value=False
-        stop.wait.side_effect=[False]*(len(ages)-1)+[True]
+        stop.wait.side_effect=[False]+[False]*(len(ages)-1)+[True]
         with patch('mijntv.__main__.time.time',return_value=100000), patch('mijntv.__main__.time.monotonic',side_effect=monotonic or [1000]*len(ages)), patch('builtins.print') as output:
             refresh_loop(store,stop)
-        for call in stop.wait.call_args_list: self.assertEqual(call.args,(60,))
+        self.assertEqual(stop.wait.call_args_list[0].args,(BACKGROUND_STARTUP_DELAY,))
+        for call in stop.wait.call_args_list[1:]: self.assertEqual(call.args,(60,))
         self.assertNotIn('private-provider-details',str(output.call_args_list))
         return store
+
+    def test_shutdown_during_startup_delay_does_no_catalog_work(self):
+        store=Mock();stop=Mock();stop.wait.return_value=True
+        refresh_loop(store,stop)
+        stop.wait.assert_called_once_with(180)
+        store.optimize_catalog.assert_not_called()
+        store.cleanup_imports.assert_not_called()
+        store.refresh_source.assert_not_called()
 
     def test_refresh_when_six_hours_elapsed_after_recent_start(self):
         store=self.run_loop([PLAYLIST_REFRESH_SECONDS-30,PLAYLIST_REFRESH_SECONDS+30])

@@ -1,4 +1,5 @@
 """Bounded XMLTV import for favorites; provider credentials stay on the server."""
+from .maintenance import BACKGROUND_STARTUP_DELAY
 import gzip
 import hashlib
 import io
@@ -96,8 +97,10 @@ class EPG:
 
     def configuration(self):
         with self.store.connect() as db:
-            ids = {row[0].strip() for row in db.execute('''SELECT DISTINCT c.tvg_id FROM favorites f
-                          JOIN channels c ON f.id=c.id WHERE trim(c.tvg_id)<>'' ''')}
+            ids = {row[0].strip() for row in db.execute('''SELECT DISTINCT COALESCE(e.epg_id,trim(c.tvg_id)) FROM favorites f
+                          LEFT JOIN favorite_epg e ON e.id=f.id
+                          LEFT JOIN channels c ON f.id=c.id
+                          WHERE COALESCE(e.epg_id,trim(c.tvg_id))<>'' ''')}
         source = self.store.setting('source')
         signature = hashlib.sha256(json.dumps([source, sorted(ids)]).encode()).hexdigest()
         return epg_url(source), ids, signature
@@ -139,6 +142,8 @@ class EPG:
             self.lock.release()
 
     def run(self, stop):
+        if stop.wait(BACKGROUND_STARTUP_DELAY):
+            return
         while not stop.is_set():
             try:
                 url, ids, signature = self.configuration()

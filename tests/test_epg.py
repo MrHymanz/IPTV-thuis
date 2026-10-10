@@ -27,6 +27,27 @@ class EPGTests(unittest.TestCase):
         self.store.add_favorite(self.channel)
         self.epg = EPG(self.store)
 
+    def test_startup_delay_can_cancel_before_any_epg_reads(self):
+        from unittest.mock import Mock
+        stop=Mock();stop.wait.return_value=True
+        with patch.object(self.epg,'configuration') as configuration:
+            self.epg.run(stop)
+        stop.wait.assert_called_once_with(180)
+        configuration.assert_not_called()
+
+    def test_epg_lookup_uses_saved_favorite_ids_without_catalog_scan(self):
+        from unittest.mock import Mock
+        probe=Mock();probe.execute.return_value=[]
+        with patch.object(self.store,'connect') as connect, patch.object(self.store,'setting',return_value=SOURCE):
+            connect.return_value.__enter__.return_value=probe
+            self.epg.configuration()
+        query=probe.execute.call_args.args[0]
+        with self.store.connect() as db:
+            plan=[row[3] for row in db.execute('EXPLAIN QUERY PLAN '+query)]
+            db.execute('DELETE FROM channels WHERE id=?',(self.channel,))
+        self.assertFalse(any('SCAN c' in row for row in plan),plan)
+        self.assertEqual(self.epg.configuration()[1],{'one.nl'})
+
     def test_xtream_endpoint_preserves_encoded_credentials(self):
         result = urlsplit(epg_url(SOURCE))
         self.assertEqual(result.path, '/panel/xmltv.php')

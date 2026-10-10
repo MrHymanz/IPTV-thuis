@@ -277,6 +277,7 @@ class Store:
                     # random index pages for every row on a mechanical disk.
                     db.execute(f'CREATE UNIQUE INDEX {staging}_id ON {staging}(id)')
                     db.execute(f'CREATE INDEX {staging}_epg ON {staging}(trim(tvg_id))')
+                    db.execute(f'CREATE INDEX {staging}_groups ON {staging}(group_name)')
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
@@ -328,6 +329,13 @@ class Store:
             rows = db.execute('SELECT id,name,group_name,manual FROM channels WHERE ' + clause +
                               ' ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?', args + [limit, offset])
             return {'total': count, 'items': [dict(row) for row in rows]}
+
+    def optimize_catalog(self):
+        # One-time index construction runs after the startup grace period, never in Store.__init__.
+        with self.import_lock, self.connect() as db:
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='channels' AND sql LIKE '%(group_name)%'").fetchone()
+            if not exists:
+                db.execute('CREATE INDEX IF NOT EXISTS channels_group_lookup ON channels(group_name)')
 
     def groups(self):
         with self.connect() as db:
