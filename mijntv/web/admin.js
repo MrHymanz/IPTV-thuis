@@ -135,12 +135,23 @@ async function loadDisplay() {
   const display = await api('/api/display');
   $('display-resolution').value = display.resolution;
   for (const option of $('display-resolution').options) option.disabled = !display.available.includes(option.value);
+  const refresh = $('display-refresh-rate');
+  function updateRates() {
+    const rates = display.available_rates[$('display-resolution').value] || ['auto'];
+    for (const option of refresh.options) option.disabled = !rates.includes(option.value);
+    if (!rates.includes(refresh.value)) refresh.value = 'auto';
+  }
+  refresh.value = display.refresh_rate;
+  $('display-resolution').onchange = updateRates;
+  updateRates();
   $('display-margin').value = display.margin;
-  $('display-status').textContent = display.error || (display.native ? `Actief tv-signaal: ${display.current || 'onbekend'}.` : 'Deze instantie draait alleen webbeheer. De instelling geldt voor de zelfstandige tv-app die dezelfde gegevensmap gebruikt; de browserresolutie blijft door je scherm bepaald.');
+  $('display-decoder').value = display.decoder;
+  $('display-show-fps').checked = display.show_fps;
+  $('display-status').textContent = display.error || (display.native ? `Actief tv-signaal: ${display.current || 'onbekend'}${display.current_rate ? ' bij ' + display.current_rate + ' Hz' : ''}.` : 'Deze instantie draait alleen webbeheer. De instelling geldt voor de zelfstandige tv-app die dezelfde gegevensmap gebruikt; de browserresolutie blijft door je scherm bepaald.');
 }
 $('display-form').onsubmit = event => {
   event.preventDefault();
-  mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value)}, result => result.native ? 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.' : 'Voorkeur opgeslagen op deze beheerserver. Deze server bestuurt geen tv-scherm. Open de beheerpagina op de mediacenter-pc om het tv-beeld aan te passen.');
+  mutate('/api/display', {resolution:$('display-resolution').value, margin:Number($('display-margin').value), decoder:$('display-decoder').value, show_fps:$('display-show-fps').checked, refresh_rate:$('display-refresh-rate').value}, result => result.native ? 'Beeldinstellingen opgeslagen. Het tv-scherm wordt opnieuw geopend.' : 'Voorkeur opgeslagen op deze beheerserver. Deze server bestuurt geen tv-scherm. Open de beheerpagina op de mediacenter-pc om het tv-beeld aan te passen.');
 };
 
 function recordingTime(timestamp) { return new Date(timestamp*1000).toLocaleString('nl-NL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); }

@@ -194,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/recordings/delete':
                 self.server.recordings.delete(data['id'])
             elif path == '/api/display':
-                self.server.display.save(data['resolution'], data['margin'])
+                self.server.display.save(data['resolution'], data['margin'], data.get('decoder'), data.get('show_fps'), data.get('refresh_rate'))
                 result['native'] = self.server.display.native
             elif path == '/api/epg/refresh':
                 result['programmes'] = self.server.epg.refresh()

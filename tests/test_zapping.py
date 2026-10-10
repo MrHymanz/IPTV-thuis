@@ -22,7 +22,7 @@ class ZapInterfaceTests(unittest.TestCase):
         gate=threading.Event();started=threading.Event()
         player=Mock();player.events=queue.Queue();player.snapshot.return_value={}
         player.process.poll.return_value=None
-        def slow_player(window):
+        def slow_player(window, hwdec='auto-safe'):
             started.set();gate.wait(3);return player
         def pump(seconds):
             end=time.monotonic()+seconds

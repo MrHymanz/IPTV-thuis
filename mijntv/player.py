@@ -14,7 +14,9 @@ from .diagnostics import PROPERTIES, StreamWatchdog, safe_snapshot
 
 
 class Player:
-    def __init__(self, window_id):
+    def __init__(self, window_id, hwdec='auto-safe'):
+        if hwdec not in ('auto-safe', 'no'):
+            raise ValueError('Ongeldige decoderkeuze.')
         self.events = queue.Queue()
         self.lock = threading.Lock()
         self.status_lock = threading.Lock()
@@ -36,7 +38,7 @@ class Player:
             '--wid=' + str(window_id), '--input-ipc-server=' + self.socket_path,
             '--input-default-bindings=no', '--input-vo-keyboard=no', '--input-terminal=no',
             '--osc=no', '--osd-level=0', '--cursor-autohide=always', '--terminal=no',
-            '--cache=yes', '--demuxer-max-bytes=64MiB', '--vo=gpu,x11', '--hwdec=auto-safe',
+            '--cache=yes', '--demuxer-max-bytes=64MiB', '--vo=gpu,x11', '--hwdec=' + hwdec,
         ] + audio, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.connection = None
         deadline = time.monotonic() + 8
@@ -103,7 +105,7 @@ class Player:
 
     def _monitor(self):
         while not self.monitor_stop.wait(2):
-            if not self.monitor_active or not self.watchdog_enabled:
+            if not self.monitor_active:
                 continue
             try:
                 with self.lock:
@@ -116,7 +118,7 @@ class Player:
                                                             'request_id': 'health:'+key})+'\n').encode())
                 with self.status_lock:
                     values = dict(self.status)
-                    if self.watchdog.stalled(values, time.monotonic()):
+                    if self.watchdog_enabled and self.watchdog.stalled(values, time.monotonic()):
                         self.events.put({'event': 'stalled', 'reason': self.watchdog.reason, 'snapshot': safe_snapshot(values)})
             except (RuntimeError, OSError):
                 return

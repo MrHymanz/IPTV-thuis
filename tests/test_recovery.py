@@ -94,6 +94,26 @@ class RecoveryTests(unittest.TestCase):
         self.tv.start_stream({'id':'latest','url':'last'})
         self.tv.player.play.assert_called_once_with('last')
 
+    def test_saved_software_decoder_is_used_by_new_player(self):
+        self.tv.player=None;self.tv.display_settings={'decoder':'software'}
+        self.tv.volume=100;self.tv.muted=False;self.tv.root=Mock();self.tv.video=Mock()
+        self.tv.tried_sources=set()
+        def thread(target,daemon):
+            worker=Mock();worker.start.side_effect=target;return worker
+        with patch('mijntv.tv.threading.Thread',side_effect=thread), patch('mijntv.tv.Player') as player:
+            TV.start_stream(self.tv,{'id':'channel','url':'stream'})
+        player.assert_called_once_with(self.tv.video.winfo_id(),hwdec='no')
+        player.return_value.play.assert_called_once_with('stream')
+
+    def test_fps_overlay_reports_video_screen_and_drops_and_can_be_hidden(self):
+        self.tv.root=Mock();self.tv.fps_label=Mock();self.tv.display_settings={'show_fps':True}
+        self.tv.player.snapshot.return_value={'estimated-vf-fps':25.0,'display-fps':60.0,'frame-drop-count':3}
+        self.tv.update_fps()
+        self.tv.fps_label.configure.assert_called_once_with(text='Video 25.0 fps · TV 60 Hz · drops 3')
+        self.tv.fps_label.lift.assert_called_once()
+        self.tv.display_settings['show_fps']=False;self.tv.update_fps()
+        self.tv.fps_label.place_forget.assert_called_once()
+
     def test_only_advancing_visible_source_is_remembered(self):
         self.tv.store=Mock(); self.tv.active_source_id='backup'
         self.tv.channels=[{'id':'favorite','sources':[{'id':'primary'},{'id':'backup'}]}]

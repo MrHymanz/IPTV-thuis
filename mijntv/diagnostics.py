@@ -6,7 +6,7 @@ from pathlib import Path
 PROPERTIES = ('aid', 'time-pos', 'pause', 'core-idle', 'seeking', 'paused-for-cache',
               'audio-params/samplerate', 'audio-out-params/samplerate', 'audio-pts', 'current-ao', 'hwdec-current',
               'decoder-frame-drop-count', 'frame-drop-count', 'demuxer-cache-state',
-              'video-black', 'video-checked-at')
+              'video-black', 'video-checked-at', 'estimated-vf-fps', 'display-fps')
 CACHE_FIELDS = ('cache-duration', 'reader-pts', 'cache-end', 'raw-input-rate',
                 'total-bytes', 'underrun', 'eof')
 

@@ -66,6 +66,9 @@ class TV:
         self.video = tk.Frame(self.content, bg='black')
         self.video.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.video.update_idletasks()
+        self.fps_label = tk.Label(self.content, text='', bg='#101820', fg='#d8e1e8',
+                                  font=('DejaVu Sans', 10), padx=5, pady=2)
+
         self.home = tk.Frame(self.content, bg=BG)
         self.home.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.home.lift()
@@ -137,9 +140,26 @@ class TV:
         self.tick()
         self.update_storage()
         self.root.after(100, self.poll_logos)
+        self.root.after(1000, self.update_fps)
         self.root.after(100, self.poll_player)
         self.root.after(200, self.present)
         self.root.after(2000, self.check_display)
+
+    def update_fps(self):
+        if self.watching and self.player and self.display_settings['show_fps']:
+            values = self.player.snapshot()
+            fps = values.get('estimated-vf-fps')
+            hz = values.get('display-fps')
+            rate = f'{fps:.1f}' if isinstance(fps, (float, int)) else '—'
+            refresh = f' · TV {hz:.0f} Hz' if isinstance(hz, (float, int)) else ''
+            drops = values.get('frame-drop-count')
+            dropped = f' · drops {drops}' if type(drops) is int else ''
+            self.fps_label.configure(text=f'Video {rate} fps{refresh}{dropped}')
+            self.fps_label.place(x=12, y=12)
+            self.fps_label.lift()
+        else:
+            self.fps_label.place_forget()
+        self.root.after(1000, self.update_fps)
 
     def check_display(self):
         if Display(self.store).settings() != self.display_settings:
@@ -590,9 +610,11 @@ class TV:
                 if future is None:
                     future = self.player_future = Future()
                     window_id = self.video.winfo_id()
+                    decoder = getattr(self, 'display_settings', {}).get('decoder', 'auto')
+                    hwdec = 'no' if decoder == 'software' else 'auto-safe'
                     def create_player():
                         try:
-                            future.set_result(Player(window_id))
+                            future.set_result(Player(window_id, hwdec=hwdec))
                         except Exception as error:
                             future.set_exception(error)
                     threading.Thread(target=create_player, daemon=True).start()
