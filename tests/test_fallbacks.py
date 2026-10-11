@@ -24,6 +24,60 @@ class FallbackTests(unittest.TestCase):
         self.primary=self.ids['NPO 1 FHD'];self.backup=self.ids['NPO1 4K']
         self.store.add_favorite(self.primary,'NPO 1')
 
+    def test_missing_metadata_and_quality_change_preserve_favorite_and_preferred_backup(self):
+        self.store.remember_source(self.primary,self.backup)
+        missing=PLAYLIST.replace('tvg-id="npo1.nl"','tvg-id=""').replace('NPO 1 FHD','NPO 1 HD')
+        self.store.import_playlist(missing.replace('/backup','/updated'))
+        reopened=Store(self.directory.name)
+        favorite=reopened.favorites(playback=True)[0]
+        self.assertEqual(favorite['id'],self.primary)
+        self.assertEqual(favorite['label'],'NPO 1')
+        self.assertEqual(favorite['epg_id'],'npo1.nl')
+        self.assertEqual(favorite['source_count'],3)
+        self.assertEqual(favorite['sources'][0]['id'],self.backup)
+        self.assertEqual(favorite['url'],'https://example.test/updated')
+        reopened.import_playlist(missing)
+        self.assertEqual(reopened.favorites(playback=True)[0]['id'],self.primary)
+
+    def test_existing_catalog_can_be_repaired_from_saved_identities(self):
+        self.store.remember_source(self.primary,self.backup)
+        self.store=Store(self.directory.name)
+        with self.store.connect() as db:
+            remembered=[tuple(r) for r in db.execute('SELECT * FROM remembered_channels')]
+            self.assertTrue(remembered)
+            db.execute('DELETE FROM remembered_channels')
+            db.execute('UPDATE channels SET tvg_id=?',('',))
+            db.execute('UPDATE channels SET id=id || ?',('-changed',))
+            db.executemany('INSERT INTO remembered_channels VALUES (?,?,?,?)',remembered)
+        self.assertFalse(self.store.favorites()[0]['available'])
+        self.assertEqual(self.store.repair_channel_identities(),len(remembered))
+        favorite=self.store.favorites(playback=True)[0]
+        self.assertTrue(favorite['available'])
+        self.assertEqual(favorite['id'],self.primary)
+        self.assertEqual(favorite['sources'][0]['id'],self.backup)
+        self.assertEqual(self.store.repair_channel_identities(),0)
+
+    def test_ambiguous_name_and_conflicting_epg_are_not_guessed(self):
+        replacement=PLAYLIST.replace('tvg-id="npo1.nl"','tvg-id="different.nl"')
+        self.store.import_playlist(replacement)
+        self.assertFalse(self.store.favorites()[0]['available'])
+        ambiguous=PLAYLIST.replace('tvg-id="npo1.nl"','tvg-id=""').replace('NPO 1 FHD','NPO 1 HD')
+        ambiguous+='#EXTINF:-1 group-title="Algemeen",NPO 1 SD\nhttps://example.test/ambiguous\n'
+        self.store.import_playlist(ambiguous)
+        with self.store.connect() as db:
+            self.assertIsNone(db.execute('SELECT id FROM channels WHERE id=?',(self.primary,)).fetchone())
+
+    def test_duplicate_names_use_unchanged_stream_to_disambiguate(self):
+        replacement=PLAYLIST.replace('tvg-id="npo1.nl"','tvg-id=""')
+        replacement+='#EXTINF:-1 group-title="Algemeen",NPO 1 FHD\nhttps://example.test/different\n'
+        self.store.import_playlist(replacement)
+        favorite=self.store.favorites(playback=True)[0]
+        self.assertTrue(favorite['available'])
+        self.assertEqual(favorite['id'],self.primary)
+        self.assertEqual(favorite['url'],'https://example.test/primary')
+        self.store.import_playlist(replacement)
+        self.assertTrue(self.store.favorites()[0]['available'])
+
     def test_failed_preference_removal_does_not_clear_newer_choice(self):
         self.store.remember_source(self.primary,self.backup)
         self.store.forget_source(self.primary,self.primary)

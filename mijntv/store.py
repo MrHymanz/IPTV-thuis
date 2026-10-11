@@ -171,6 +171,10 @@ class Store:
                     id TEXT PRIMARY KEY, label TEXT NOT NULL, position INTEGER NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS remembered_channels (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL, epg_id TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS remembered_streams (id TEXT PRIMARY KEY, signature TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS favorite_epg (id TEXT PRIMARY KEY, epg_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS favorite_source (id TEXT PRIMARY KEY, source_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS favorite_backups (
@@ -188,6 +192,7 @@ class Store:
             if not indexed:
                 db.execute('CREATE INDEX IF NOT EXISTS channels_epg_lookup ON channels(trim(tvg_id))')
             self._merge_favorites(db)
+            self._remember_channels(db)
         os.chmod(self.path, 0o600)
 
     @staticmethod
@@ -211,6 +216,71 @@ class Store:
                 db.execute('DELETE FROM favorite_backups WHERE favorite_id=?', (row['id'],))
             elif identity:
                 seen[identity] = row['id']
+
+    @staticmethod
+    def _remember_channels(db):
+        ids = {r[0] for r in db.execute('SELECT id FROM favorites')}
+        ids.update(r[0] for r in db.execute('SELECT channel_id FROM favorite_backups'))
+        epg = [r[0] for r in db.execute("SELECT DISTINCT epg_id FROM favorite_epg WHERE epg_id<>''")]
+        rows = []
+        if epg:
+            rows.extend(db.execute('SELECT id,name,group_name,trim(tvg_id) FROM channels WHERE trim(tvg_id) IN ('+
+                                   ','.join('?' for _ in epg)+')', epg).fetchall())
+        for identifier in ids:
+            row = db.execute('SELECT id,name,group_name,trim(tvg_id) FROM channels WHERE id=?', (identifier,)).fetchone()
+            if row and row[3]: rows.append(row)
+        db.executemany('INSERT OR REPLACE INTO remembered_channels VALUES (?,?,?,?)', rows)
+        signatures=[]
+        for row in rows:
+            url=db.execute('SELECT url FROM channels WHERE id=?',(row[0],)).fetchone()
+            if url:
+                signatures.append((row[0],hashlib.sha256(url[0].encode()).hexdigest()))
+        db.executemany('INSERT OR REPLACE INTO remembered_streams VALUES (?,?)',signatures)
+
+    @staticmethod
+    def _channel_name(name):
+        # Only remove provider country prefixes and explicit quality suffixes.
+        name = re.sub(r'^[A-Z]{2,3}\|\s*', '', name.upper())
+        name = re.sub(r'\s*(?:FHD|UHD|HD|SD|4K|8K)(?:\s*[⁰¹²³⁴⁵⁶⁷⁸⁹ᶠᵖˢ]*)$', '', name)
+        return re.sub(r'\s+', '', name)
+
+    @classmethod
+    def _restore_channel_identities(cls, db, table='channels'):
+        if not re.fullmatch(r'channels(?:_import_[0-9a-f]{32})?', table):
+            raise ValueError('Ongeldige catalogus.')
+        remembered = db.execute('SELECT r.* FROM remembered_channels r LEFT JOIN favorites f ON f.id=r.id '
+                                'ORDER BY f.position IS NULL,f.position,r.id').fetchall()
+        groups = {}
+        for old in remembered:
+            if old['group_name'] not in groups:
+                groups[old['group_name']] = db.execute(f'SELECT id,name,tvg_id,url FROM {table} WHERE group_name=?',
+                                                       (old['group_name'],)).fetchall()
+        claimed, restored = set(), 0
+        for old in remembered:
+            if db.execute(f'SELECT 1 FROM {table} WHERE id=?', (old['id'],)).fetchone(): continue
+            candidates = [r for r in groups[old['group_name']] if r['id'] not in claimed
+                          and (not r['tvg_id'].strip() or r['tvg_id'].strip() == old['epg_id'])]
+            exact = [r for r in candidates if r['name'] == old['name']]
+            if len(exact)>1:
+                signature=db.execute('SELECT signature FROM remembered_streams WHERE id=?',(old['id'],)).fetchone()
+                if signature:
+                    same_stream=[r for r in exact if hashlib.sha256(r['url'].encode()).hexdigest()==signature[0]]
+                    if len(same_stream)==1: exact=same_stream
+            matches = exact or [r for r in candidates if cls._channel_name(r['name']) == cls._channel_name(old['name'])]
+            if len(matches) != 1: continue
+            row = matches[0]
+            claimed.add(row['id'])
+            db.execute(f'UPDATE {table} SET id=?,tvg_id=? WHERE id=?',
+                       (old['id'],row['tvg_id'].strip() or old['epg_id'],row['id']))
+            restored += 1
+        return restored
+
+    def repair_channel_identities(self):
+        with self.import_lock, self.connect() as db:
+            count = self._restore_channel_identities(db)
+            self._merge_favorites(db)
+            self._remember_channels(db)
+            return count
 
     @contextmanager
     def connect(self):
@@ -278,12 +348,15 @@ class Store:
                     db.execute(f'CREATE UNIQUE INDEX {staging}_id ON {staging}(id)')
                     db.execute(f'CREATE INDEX {staging}_epg ON {staging}(trim(tvg_id))')
                     db.execute(f'CREATE INDEX {staging}_groups ON {staging}(group_name)')
+                    self._remember_channels(db)
+                    self._restore_channel_identities(db, staging)
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
                     db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('source', source))
                     db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('refreshed_at', str(time.time())))
                     self._merge_favorites(db)
+                    self._remember_channels(db)
                 return count
             finally:
                 with self.connect() as db:
