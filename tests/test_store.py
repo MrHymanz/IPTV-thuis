@@ -93,6 +93,57 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.setting('source'), 'https://example.test/new')
         self.assertIn('/fresh/', self.store.favorites(playback=True)[0]['url'])
 
+    def test_automatic_refresh_rejects_vod_only_catalog_and_can_retry(self):
+        self.store.import_playlist(playlist(),'https://example.test/list')
+        for row in self.store.catalog()['items']: self.store.add_favorite(row['id'])
+        before=self.store.favorites(playback=True)
+        refreshed=self.store.setting('refreshed_at')
+        vod='#EXTM3U\n'+''.join('#EXTINF:-1 group-title="Films",Film '+str(i)+'\nhttps://example.test/vod/'+str(i)+'\n' for i in range(200))
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(vod)):
+            with self.assertRaisesRegex(ValueError,'vorige zenderlijst'): self.store.refresh_source()
+        self.assertEqual(self.store.favorites(playback=True),before)
+        self.assertEqual(self.store.setting('refreshed_at'),refreshed)
+        self.assertEqual(self.store.catalog()['total'],2)
+        with self.store.connect() as db:
+            self.assertFalse(db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'channels_import_%'").fetchall())
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(playlist('recovered'))):
+            self.store.refresh_source()
+        self.assertTrue(all('/recovered/' in f['url'] for f in self.store.favorites(playback=True)))
+
+    def test_automatic_refresh_accepts_metadata_repair_and_individual_removal(self):
+        self.store.import_playlist(playlist(),'https://example.test/list')
+        for row in self.store.catalog()['items']: self.store.add_favorite(row['id'])
+        without_ids=playlist('fresh').replace('tvg-id="one"','tvg-id=""').replace('tvg-id="two"','tvg-id=""')
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(without_ids)):
+            self.store.refresh_source()
+        self.assertTrue(all(f['available'] for f in self.store.favorites()))
+        one='#EXTM3U\n#EXTINF:-1 tvg-id="one" group-title="NL, HD",NPO 1\nhttps://example.test/one\n'
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(one)):
+            self.store.refresh_source()
+        self.assertEqual(sum(f['available'] for f in self.store.favorites()),1)
+
+    def test_refresh_remembers_favorites_without_epg_when_provider_adds_metadata(self):
+        original=playlist().replace('tvg-id="one"','tvg-id=""').replace('tvg-id="two"','tvg-id=""')
+        self.store.import_playlist(original,'https://example.test/list')
+        for row in self.store.catalog()['items']: self.store.add_favorite(row['id'])
+        ids=[f['id'] for f in self.store.favorites()]
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(playlist('fresh'))):
+            self.store.refresh_source()
+        self.assertEqual([f['id'] for f in self.store.favorites()],ids)
+        self.assertTrue(all(f['available'] for f in self.store.favorites()))
+
+    def test_refresh_protects_remembered_favorites_even_if_current_catalog_is_broken(self):
+        self.store.import_playlist(playlist(),'https://example.test/list')
+        for row in self.store.catalog()['items']: self.store.add_favorite(row['id'])
+        self.store=Store(self.directory.name)
+        with self.store.connect() as db: db.execute('DELETE FROM channels')
+        vod='#EXTM3U\n#EXTINF:-1 group-title="Films",Film\nhttps://example.test/vod\n'
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(vod)):
+            with self.assertRaises(ValueError): self.store.refresh_source()
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(playlist('recovered'))):
+            self.store.refresh_source()
+        self.assertTrue(all(f['available'] for f in self.store.favorites()))
+
     def test_xtream_special_characters_and_server_paths(self):
         for base in ('https://example.test:8443/portal/', 'https://example.test:8443/portal/get.php',
                      'https://example.test:8443/portal/player_api.php'):

@@ -78,6 +78,16 @@ class FallbackTests(unittest.TestCase):
         self.store.import_playlist(replacement)
         self.assertTrue(self.store.favorites()[0]['available'])
 
+    def test_missing_variant_does_not_claim_existing_favorite_identity(self):
+        extended=PLAYLIST+'#EXTINF:-1 tvg-id="npo1.nl" group-title="Algemeen",NPO 1 HD\nhttps://example.test/hd\n'
+        self.store.import_playlist(extended)
+        self.store.import_playlist(PLAYLIST)
+        favorite=self.store.favorites(playback=True)[0]
+        self.assertTrue(favorite['available'])
+        self.assertEqual(favorite['sources'][0]['id'],self.primary)
+        with self.store.connect() as db:
+            self.assertIsNotNone(db.execute('SELECT id FROM channels WHERE id=?',(self.primary,)).fetchone())
+
     def test_failed_preference_removal_does_not_clear_newer_choice(self):
         self.store.remember_source(self.primary,self.backup)
         self.store.forget_source(self.primary,self.primary)

@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -228,7 +229,11 @@ class Store:
                                    ','.join('?' for _ in epg)+')', epg).fetchall())
         for identifier in ids:
             row = db.execute('SELECT id,name,group_name,trim(tvg_id) FROM channels WHERE id=?', (identifier,)).fetchone()
-            if row and row[3]: rows.append(row)
+            if row:
+                if not row[3]:
+                    saved=db.execute('SELECT epg_id FROM remembered_channels WHERE id=?',(identifier,)).fetchone()
+                    if saved: row=tuple(row[:3])+(saved[0],)
+                rows.append(row)
         db.executemany('INSERT OR REPLACE INTO remembered_channels VALUES (?,?,?,?)', rows)
         signatures=[]
         for row in rows:
@@ -255,11 +260,12 @@ class Store:
             if old['group_name'] not in groups:
                 groups[old['group_name']] = db.execute(f'SELECT id,name,tvg_id,url FROM {table} WHERE group_name=?',
                                                        (old['group_name'],)).fetchall()
-        claimed, restored = set(), 0
+        existing={old['id'] for old in remembered if db.execute(f'SELECT 1 FROM {table} WHERE id=?',(old['id'],)).fetchone()}
+        claimed, restored = set(existing), 0
         for old in remembered:
-            if db.execute(f'SELECT 1 FROM {table} WHERE id=?', (old['id'],)).fetchone(): continue
+            if old['id'] in existing: continue
             candidates = [r for r in groups[old['group_name']] if r['id'] not in claimed
-                          and (not r['tvg_id'].strip() or r['tvg_id'].strip() == old['epg_id'])]
+                          and (not old['epg_id'] or not r['tvg_id'].strip() or r['tvg_id'].strip() == old['epg_id'])]
             exact = [r for r in candidates if r['name'] == old['name']]
             if len(exact)>1:
                 signature=db.execute('SELECT signature FROM remembered_streams WHERE id=?',(old['id'],)).fetchone()
@@ -314,7 +320,27 @@ class Store:
                 db.commit()
             return len(names)
 
-    def import_playlist(self, text, source=''):
+    @staticmethod
+    def _validate_refresh(db, table):
+        # A provider can return a valid, enormous VOD-only playlist during an
+        # outage. Its size says nothing about the availability of live TV.
+        expected, available = 0, 0
+        rows=db.execute('SELECT f.id,c.id AS current_id,c.manual,e.epg_id,r.id AS remembered_id '
+                        'FROM favorites f LEFT JOIN channels c ON c.id=f.id '
+                        'LEFT JOIN favorite_epg e ON e.id=f.id '
+                        'LEFT JOIN remembered_channels r ON r.id=f.id').fetchall()
+        for row in rows:
+            if row['manual'] or not (row['current_id'] or row['remembered_id'] or row['epg_id']): continue
+            expected += 1
+            found=db.execute(f'SELECT 1 FROM {table} WHERE id=?',(row['id'],)).fetchone()
+            if not found and row['epg_id']:
+                found=db.execute(f'SELECT 1 FROM {table} WHERE trim(tvg_id)=? LIMIT 1',(row['epg_id'],)).fetchone()
+            available += bool(found)
+        if expected and available * 2 < expected:
+            logging.getLogger('mijntv.stream').warning('playlist_refresh_rejected favorites_expected=%s favorites_available=%s',expected,available)
+            raise ValueError('De providerlijst mist te veel favoriete zenders. De vorige zenderlijst blijft behouden; verversen wordt later opnieuw geprobeerd.')
+
+    def import_playlist(self, text, source='', *, protect_favorites=False):
         # Build in short transactions: favorites must remain writable while a
         # provider list with millions of entries is parsed. Swap table names
         # only after validation succeeds, preserving the original on failure.
@@ -350,6 +376,8 @@ class Store:
                     db.execute(f'CREATE INDEX {staging}_groups ON {staging}(group_name)')
                     self._remember_channels(db)
                     self._restore_channel_identities(db, staging)
+                    if protect_favorites:
+                        self._validate_refresh(db,staging)
                     db.execute(f'INSERT INTO {staging} SELECT * FROM channels WHERE manual=1')
                     db.execute(f'ALTER TABLE channels RENAME TO {previous}')
                     db.execute(f'ALTER TABLE {staging} RENAME TO channels')
@@ -384,7 +412,7 @@ class Store:
             with self.import_lock:
                 if self.setting('source') != source:
                     raise ValueError('Het M3U-adres is ondertussen gewijzigd. De nieuwe instelling blijft behouden.')
-                return self.import_playlist(text, source)
+                return self.import_playlist(text, source, protect_favorites=True)
 
     def catalog(self, search='', group='', offset=0, limit=100):
         where, args = ['1=1'], []
