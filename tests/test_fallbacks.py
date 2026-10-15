@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from mijntv.store import Store
 
@@ -16,6 +17,14 @@ https://example.test/unknown
 '''
 
 class FallbackTests(unittest.TestCase):
+    def test_busy_database_does_not_block_preference_write(self):
+        with self.store.connect() as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            with self.assertRaises(sqlite3.OperationalError):
+                self.store.remember_source(self.primary,self.backup)
+        self.store.remember_source(self.primary,self.backup)
+        self.assertEqual(self.store.favorites(playback=True)[0]['sources'][0]['id'],self.backup)
+
     def setUp(self):
         self.directory=tempfile.TemporaryDirectory();self.addCleanup(self.directory.cleanup)
         self.store=Store(self.directory.name);self.store.import_playlist(PLAYLIST)

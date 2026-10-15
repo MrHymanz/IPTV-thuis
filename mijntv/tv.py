@@ -1,5 +1,6 @@
 """Large-button TV interface for an X11 Linux session."""
 from concurrent.futures import Future
+from collections import deque
 import math
 import logging
 import io
@@ -7,6 +8,7 @@ import threading
 from pathlib import Path
 import queue
 import socket
+import sqlite3
 import time
 import tkinter as tk
 
@@ -24,6 +26,9 @@ class TV:
         self.panel_mode = None
         self.panel_selected = 0
         self.menu_open = False
+        self.epg_notice_seen = deque(maxlen=256)
+        self.epg_notice_key = None
+        self.epg_notice_until = 0
         self.menu_selected = 0
         self.playing_recording = None
         self.display_settings = Display(store).settings()
@@ -131,6 +136,14 @@ class TV:
         self.panel_rows.pack(fill='both', expand=True, padx=60)
         self.small_button(self.panel, '← Terug naar zenders', self.go_home).pack(pady=20)
         self.small_button(self.banner, '● Opnemen', self.record_current).pack(side='right', padx=10, pady=14)
+        self.epg_notice = tk.Frame(self.content, bg='#1c2c3a', highlightthickness=1,
+                                   highlightbackground='#4a6072', padx=22, pady=16)
+        self.epg_notice_heading = self.label(self.epg_notice, '', 16, color=AMBER, bold=True)
+        self.epg_notice_heading.configure(bg='#1c2c3a', anchor='w')
+        self.epg_notice_heading.pack(fill='x')
+        self.epg_notice_title = self.label(self.epg_notice, '', 22, bold=True)
+        self.epg_notice_title.configure(bg='#1c2c3a', anchor='w', justify='left')
+        self.epg_notice_title.pack(fill='x', pady=(7, 0))
         self.build_menu()
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
@@ -580,6 +593,8 @@ class TV:
         if not channel['available']:
             self.show_error('Deze zender is niet beschikbaar. Kies een andere zender.')
             return
+        self.epg_notice.place_forget()
+        self.epg_notice_key = None
         self.loading = False
         self.recovery_pending = None
         self.active_source_id = None
@@ -658,6 +673,8 @@ class TV:
         self.choose(available[i])
 
     def go_home(self):
+        self.epg_notice.place_forget()
+        self.epg_notice_key = None
         if self.pending_zap:
             self.root.after_cancel(self.pending_zap)
             self.pending_zap = None
@@ -715,7 +732,11 @@ class TV:
             channel = self.channels[self.selected]
             source_id = self.active_source_id
             if getattr(self, 'remembered_source', None) != (channel['id'], source_id):
-                self.store.remember_source(channel['id'], source_id)
+                try:
+                    self.store.remember_source(channel['id'], source_id)
+                except sqlite3.Error:
+                    logging.getLogger('mijntv.stream').info('stream_preference_deferred')
+                    return
                 # Keep the current screen's cached sources in the same order as the database.
                 channel['sources'].sort(key=lambda source: source['id'] != source_id)
                 self.remembered_source = (channel['id'], source_id)
@@ -753,6 +774,13 @@ class TV:
         self.start_stream(self.channels[self.selected])
 
     def poll_player(self):
+        try:
+            self._poll_player()
+        finally:
+            # A transient failure must never stop event handling or banner expiry.
+            self.root.after(100, self.poll_player)
+
+    def _poll_player(self):
         if self.recovery_pending and self.watching and time.monotonic()-self.recovery_attempts[-1] >= 60:
             reason, snapshot = self.recovery_pending
             self.recovery_pending = None
@@ -802,9 +830,42 @@ class TV:
                 self.recover_stream('loading_timeout', self.player.snapshot() if self.player else None)
         if self.watching and time.monotonic()>self.message_until:
             self.banner.place_forget()
-        self.root.after(100, self.poll_player)
+
+    def update_epg_notice(self):
+        now = time.time()
+        if (not self.watching or self.playing_recording or self.menu_open or self.panel_mode
+                or getattr(self, 'loading', False) or not self.channels):
+            self.epg_notice.place_forget()
+            self.epg_notice_key = None
+            return
+        channel = self.channels[self.selected]
+        programme = (channel.get('epg') or {}).get('next') or {}
+        start, title = programme.get('start'), programme.get('title')
+        if not isinstance(start, (int, float)) or not isinstance(title, str) or not title.strip() or not 0 < start-now <= 600:
+            self.epg_notice.place_forget()
+            self.epg_notice_key = None
+            return
+        key = (channel['id'], start)
+        if key == self.epg_notice_key:
+            if time.monotonic() >= self.epg_notice_until:
+                self.epg_notice.place_forget()
+            return
+        self.epg_notice.place_forget()
+        self.epg_notice_key = None
+        if key in self.epg_notice_seen:
+            return
+        self.epg_notice_seen.append(key)
+        self.epg_notice_key = key
+        self.epg_notice_until = time.monotonic()+12
+        minutes = max(1, math.ceil((start-now)/60))
+        clock = time.strftime('%H:%M', time.localtime(start))
+        self.epg_notice_heading.configure(text=f'{channel["label"]}  ·  Over {minutes} min  ·  {clock}')
+        self.epg_notice_title.configure(text=title[:180], wraplength=max(220, int(self.screen_width*.28)))
+        self.epg_notice.place(relx=.98, rely=.035, anchor='ne')
+        self.epg_notice.lift()
 
     def tick(self):
+        self.update_epg_notice()
         self.clock.configure(text=time.strftime('%H:%M'))
         self.root.after(1000, self.tick)
 

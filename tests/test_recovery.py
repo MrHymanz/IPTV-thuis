@@ -1,4 +1,6 @@
 import importlib
+import sqlite3
+import queue
 import sys
 from types import ModuleType
 import unittest
@@ -11,12 +13,38 @@ except ModuleNotFoundError as error:
         TV=importlib.import_module('mijntv.tv').TV
 
 class RecoveryTests(unittest.TestCase):
+    def test_busy_preference_write_keeps_polling_and_hides_expired_banner(self):
+        tv=self.tv
+        tv.root=Mock();tv.banner=Mock();tv.store=Mock()
+        tv.store.remember_source.side_effect=sqlite3.OperationalError('database is locked')
+        tv.channels=[{'id':'favorite','sources':[{'id':'primary'},{'id':'backup'}]}]
+        tv.active_source_id='backup';tv.source_health=60;tv.source_healthy_since=0
+        tv.last_stream_sample=0;tv.message_until=90;tv.loading=False
+        tv.player.events=queue.Queue()
+        tv.player.snapshot.return_value={'time-pos':100,'video-black':False,'video-checked-at':100,
+                                        'pause':False,'core-idle':False,'seeking':False,'paused-for-cache':False,'aid':None}
+        with patch('mijntv.tv.time.monotonic',return_value=100): tv.poll_player()
+        tv.banner.place_forget.assert_called_once()
+        tv.root.after.assert_called_once_with(100,tv.poll_player)
+        self.assertIsNone(getattr(tv,'remembered_source',None))
+        self.assertEqual(tv.channels[0]['sources'][0]['id'],'primary')
+        tv.store.remember_source.side_effect=None
+        tv.player.snapshot.return_value.update({'time-pos':120,'video-checked-at':120})
+        with patch('mijntv.tv.time.monotonic',return_value=120): tv.poll_player()
+        self.assertEqual(tv.remembered_source,('favorite','backup'))
+
+    def test_unexpected_poll_failure_still_schedules_next_tick(self):
+        self.tv.root=Mock();self.tv._poll_player=Mock(side_effect=RuntimeError('temporary failure'))
+        with self.assertRaises(RuntimeError): self.tv.poll_player()
+        self.tv.root.after.assert_called_once_with(100,self.tv.poll_player)
+
     def setUp(self):
         self.tv=TV.__new__(TV)
         self.tv.watching=True;self.tv.playing_recording=None
         self.tv.channels=[{'url':'https://private.example/secret'}];self.tv.selected=0
         self.tv.recovery_attempts=[];self.tv.recovery_pending=None
         self.tv.player=Mock();self.tv.show_error=Mock();self.tv.start_stream=Mock()
+        self.tv.epg_notice=Mock()
 
     def recover(self, now):
         with patch('mijntv.tv.time.monotonic',return_value=now):

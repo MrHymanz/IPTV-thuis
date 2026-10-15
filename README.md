@@ -48,6 +48,7 @@ Stel de opnamemap in, plan via de EPG en beheer bewaarde opnames.
 
 - Maximaal tien grote favorieten per pagina; meer pagina's verschijnen automatisch.
 - EPG met huidige en volgende uitzending, plus een programmagids om opnames te plannen.
+- Tijdens live-tv verschijnt tien minuten voor het volgende EPG-programma rechtsboven een melding met zender, titel en begintijd. De melding verdwijnt na twaalf seconden en verschijnt eenmaal per programma; zonder EPG of tijdens opnames verschijnt ze niet.
 - Opnames terugkijken op de tv; opslaglocatie, planning en bestanden beheren via de webpagina.
 - Vrije ruimte van de ingestelde opnameschijf zichtbaar op het hoofdscherm.
 - Streams spelen met mpv binnen hetzelfde venster.

@@ -289,8 +289,8 @@ class Store:
             return count
 
     @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.path, timeout=30)
+    def connect(self, timeout=30):
+        db = sqlite3.connect(self.path, timeout=timeout)
         db.row_factory = sqlite3.Row
         try:
             with db:
@@ -476,7 +476,7 @@ class Store:
         favorite = next((f for f in self.favorites(playback=True) if f['id'] == favorite_id), None)
         if not favorite or source_id not in {source['id'] for source in favorite['sources']}:
             return
-        with self.connect() as db:
+        with self.connect(timeout=0) as db:
             db.execute('INSERT OR REPLACE INTO favorite_source VALUES (?,?)', (favorite_id, source_id))
 
     def favorites(self, playback=False):
