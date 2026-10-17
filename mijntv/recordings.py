@@ -17,6 +17,7 @@ from .maintenance import BACKGROUND_STARTUP_DELAY
 from .epg import PROGRAMME_VISIBLE
 
 MIN_FREE = 512 * 1024 * 1024
+END_BUFFER_SECONDS = 5 * 60
 STATES = {'queued': 'Gepland', 'recording': 'Neemt op', 'completed': 'Opgenomen',
           'failed': 'Mislukt', 'cancelled': 'Geannuleerd', 'interrupted': 'Onderbroken'}
 
@@ -322,10 +323,11 @@ class Recordings:
                         raise ValueError('Dit programma staat niet meer in de gids of is al afgelopen.')
                     start, end, title = programme['start'], programme['end'], programme['title']
                 start = max(now, start)
+                end += END_BUFFER_SECONDS
                 conflict = db.execute('''SELECT id FROM recordings WHERE state IN ('queued','recording')
                     AND start<? AND end>?''', (end, start)).fetchone()
                 if conflict:
-                    raise ValueError('Er is al een opname in dit tijdvak. Er kan één opname tegelijk lopen.')
+                    raise ValueError('Er is al een opname in dit tijdvak, inclusief vijf minuten uitloop. Er kan één opname tegelijk lopen.')
                 identifier = uuid.uuid4().hex
                 db.execute('INSERT INTO recordings VALUES (?,?,?,?,?,?,?, ?,?)',
                            (identifier, channel_id, channel['label'], title, start, end, 'queued', str(path), ''))

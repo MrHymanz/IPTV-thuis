@@ -46,6 +46,33 @@ class RecordingTests(unittest.TestCase):
         self.assertNotIn('url', self.recorder.list()[0])
         self.assertEqual(len(self.recorder.guide(self.channel)['programmes']), 2)
 
+    def test_five_minute_end_buffer_survives_restart_and_blocks_overlap(self):
+        identifier = self.schedule(self.now+100)
+        row = self.recorder.list()[0]
+        self.assertEqual(row['start'], self.now+100)
+        self.assertEqual(row['end'], self.now+500)
+        self.assertEqual(Recordings(self.store).list()[0]['end'], self.now+500)
+        with self.store.connect() as db:
+            db.execute('INSERT INTO epg_programmes VALUES (?,?,?,?)',
+                       ('test', self.now+200, self.now+700, 'Aansluitend'))
+        with self.assertRaisesRegex(ValueError, 'vijf minuten uitloop'):
+            self.schedule(self.now+200)
+        self.recorder.cancel(identifier)
+        self.schedule(self.now+200)
+
+    def test_recorder_runs_past_programme_end_until_buffer_expires(self):
+        self.schedule()
+        process = Mock(); process.poll.return_value = None
+        with patch('mijntv.recordings.subprocess.Popen', return_value=process):
+            self.recorder.step(self.now)
+        self.recorder.step(self.now+100)
+        process.send_signal.assert_not_called()
+        self.recorder.step(self.now+399)
+        process.send_signal.assert_not_called()
+        self.recorder.step(self.now+400)
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        self.assertEqual(self.recorder.stopping[0], 'completed')
+
     def test_readable_filenames_are_safe_unique_and_legacy_compatible(self):
         row = dict(id='12345678abcdef', directory=self.directory.name,
                    start=self.now, channel='Veronica / Disney Jr.', title='../Top Gear: deel 2')
@@ -80,7 +107,7 @@ class RecordingTests(unittest.TestCase):
         identifier = self.schedule()
         with self.store.connect() as db:
             end = db.execute('SELECT end FROM recordings WHERE id=?', (identifier,)).fetchone()[0]
-        self.assertEqual(end, rows[1][1])
+        self.assertEqual(end, rows[1][1]+300)
 
     def test_storage_change_keeps_scheduled_location_and_free_space(self):
         identifier = self.schedule()
@@ -126,7 +153,7 @@ class RecordingTests(unittest.TestCase):
         self.recorder.run(stop)
         self.assertEqual(self.recorder.list()[0]['state'], 'interrupted')
         self.recorder.update(identifier, 'queued')
-        self.recorder.step(self.now+300)
+        self.recorder.step(self.now+600)
         self.assertEqual(self.recorder.list()[0]['state'], 'failed')
 
     def test_refuses_invalid_programme_and_low_space(self):
@@ -159,7 +186,9 @@ class RecordingTests(unittest.TestCase):
         with self.store.connect() as db:
             db.execute('UPDATE channels SET url=? WHERE id=?', (f'http://127.0.0.1:{http.server_port}/live?password=test-secret',self.channel))
             db.execute('UPDATE epg_programmes SET end=? WHERE title=?', (int(time.time())+8,'Nu'))
-        identifier = self.schedule()
+        # Exercise the real end-buffer path with one second instead of five minutes.
+        with patch('mijntv.recordings.END_BUFFER_SECONDS', 1):
+            identifier = self.schedule()
         deadline = time.monotonic()+22
         while time.monotonic()<deadline:
             self.recorder.step()

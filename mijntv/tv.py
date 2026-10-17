@@ -828,11 +828,19 @@ class TV:
             return
         required = self.recordings.required_channel() if self.recordings else None
         if isinstance(required,dict):
-            # Reconnect to the pinned local feed, never start a second provider
-            # connection or silently change the source of an active recording.
+            # A disconnected/slow viewer can rejoin the same pinned feed while
+            # the recorder continues. A closed feed must wait for recorder recovery.
             self.loading = False
             self.recording_recovery_needed = True
-            self.show_error('Opname bezig. De gedeelde bron buffert; kies een andere zender om de opname te stoppen.')
+            now = time.monotonic()
+            if (required.get('stream_token') and
+                    now-getattr(self, 'recording_view_retry_at', float('-inf')) >= 15):
+                self.recording_view_retry_at = now
+                logging.getLogger('mijntv.stream').info('recording_view_reconnect reason=%s', reason)
+                self.start_stream(self.channels[self.selected])
+                self.show_error('Kijkverbinding wordt hersteld. De opname blijft doorlopen.')
+            else:
+                self.show_error('Kijkverbinding onderbroken. De opname blijft actief; herstel wordt afgewacht.')
             return
         if reason == 'black_picture':
             self.store.forget_source(self.channels[self.selected]['id'], self.active_source_id)
@@ -915,6 +923,7 @@ class TV:
                 elif event['event'] == 'stalled':
                     self.recover_stream(event.get('reason', 'stalled'), event['snapshot'])
                 elif event['event']=='file-loaded':
+                    self.recording_recovery_needed = False
                     self.recovery_pending = None
                     self.loading = False
                     self.root.focus_force()

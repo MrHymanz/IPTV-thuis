@@ -255,7 +255,7 @@ class StreamHub:
     def required_channel(self):
         with self.lock:
             feed = self.slots.get('primary')
-            return dict(feed.channel,stream_token=feed.token) if feed and feed.recording else None
+            return dict(feed.channel,stream_token=None if feed.closed else feed.token) if feed and feed.recording else None
 
     def close(self):
         with self.lock:

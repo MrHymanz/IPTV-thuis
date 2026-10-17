@@ -54,3 +54,15 @@ class RecordingGuardTests(unittest.TestCase):
         self.tv.start_stream.assert_not_called()
         self.tv.recordings.cancel.assert_not_called()
         self.assertTrue(self.tv.recording_recovery_needed)
+
+    def test_recording_viewer_rejoins_same_feed_without_stopping_recording(self):
+        self.tv.watching=True;self.tv.playing_recording=None
+        self.tv.show_error=Mock();self.tv.start_stream=Mock()
+        self.required['stream_token']='pinned-local-feed'
+        with patch('mijntv.tv.time.monotonic',return_value=100):
+            self.tv.recover_stream('eof',{})
+            self.tv.recover_stream('stalled',{})
+        self.tv.start_stream.assert_called_once_with(self.tv.channels[0])
+        self.tv.recordings.cancel.assert_not_called()
+        self.tv.recordings.stop_for_zap.assert_not_called()
+        self.assertNotIn('kies een andere zender',self.tv.show_error.call_args.args[0])
