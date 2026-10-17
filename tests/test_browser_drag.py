@@ -34,6 +34,9 @@ class BrowserDragTests(unittest.TestCase):
         self.saves = []
         self.page.on('request',lambda request: self.saves.append(request) if request.url.endswith('/api/favorites/order') else None)
         self.page.goto(f'http://127.0.0.1:{self.server.server_port}/admin')
+        self.page.locator('#panel-channels > summary').click()
+        # These regression gestures span the whole list; keep all eight rows visible.
+        self.page.locator('#favorites').evaluate("element => element.style.maxHeight = 'none'")
         self.page.locator('.drag-handle').nth(7).wait_for()
 
     def tearDown(self):

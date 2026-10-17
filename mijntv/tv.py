@@ -147,6 +147,9 @@ class TV:
         self.epg_notice_title = self.label(self.epg_notice, '', 22, bold=True)
         self.epg_notice_title.configure(bg='#1c2c3a', anchor='w', justify='left')
         self.epg_notice_title.pack(fill='x', pady=(7, 0))
+        self.watch_clock_until = 0
+        self.watch_clock = self.label(self.content,'',26,bold=True)
+        self.watch_clock.configure(bg=TILE,padx=18,pady=10)
         self.recording_zap_dialog = tk.Frame(self.content,bg=TILE,highlightthickness=2,
                                               highlightbackground=AMBER,padx=28,pady=24)
         self.recording_zap_text = self.label(self.recording_zap_dialog,'',23,bold=True)
@@ -705,6 +708,9 @@ class TV:
         self.choose(available[i])
 
     def go_home(self):
+        self.watch_clock_until=0
+        if hasattr(self,'watch_clock'):
+            self.watch_clock.place_forget()
         self.close_recording_zap()
         self.epg_notice.place_forget()
         self.epg_notice_key = None
@@ -864,6 +870,7 @@ class TV:
             self.root.after(100, self.poll_player)
 
     def _poll_player(self):
+        self.update_watch_clock()
         required=self.recordings.required_channel() if self.recordings else None
         if getattr(self,'recording_recovery_needed',False) and not isinstance(required,dict):
             self.recording_recovery_needed=False
@@ -958,6 +965,23 @@ class TV:
         self.epg_notice.place(relx=.98, rely=.035, anchor='ne')
         self.epg_notice.lift()
 
+    def show_watch_clock(self):
+        self.watch_clock_until=time.monotonic()+4
+        self.update_watch_clock()
+
+    def update_watch_clock(self):
+        if not hasattr(self,'watch_clock'):
+            return
+        if (not self.watching or self.menu_open or self.panel_mode or
+                getattr(self,'recording_zap_target',None) or
+                time.monotonic()>=self.watch_clock_until):
+            self.watch_clock.place_forget()
+            return
+        offset=self.epg_notice.winfo_height()+12 if self.epg_notice.winfo_ismapped() else 0
+        self.watch_clock.configure(text=time.strftime('%H:%M'))
+        self.watch_clock.place(relx=.98,rely=.035,y=offset,anchor='ne')
+        self.watch_clock.lift()
+
     def tick(self):
         self.update_epg_notice()
         self.clock.configure(text=time.strftime('%H:%M'))
@@ -1036,6 +1060,7 @@ class TV:
                     self.player.command('seek', -30 if key == 'Left' else 30, 'relative')
                 elif key in ('Return', 'KP_Enter', 'space') and self.player:
                     self.player.command('cycle', 'pause')
+                    self.show_watch_clock()
                 return 'break'
             if key in ('Right','Up','Prior','XF86AudioPrev'):
                 self.zap(1)
@@ -1043,6 +1068,7 @@ class TV:
                 self.zap(-1)
             elif key in ('Return','KP_Enter','space'):
                 self.show_banner()
+                self.show_watch_clock()
         elif self.channels:
             if key == 'Left' and self.selected % 5 == 0:
                 self.toggle_menu()

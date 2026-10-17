@@ -28,6 +28,7 @@ async function search() {
   $('catalog-page').textContent = total ? `${offset + 1}–${Math.min(offset + 100, total)}` : 'Geen resultaten';
 }
 function renderFavorites() {
+  const scrollTop = $('favorites').scrollTop;
   $('favorites').replaceChildren();
   if (!favorites.length) { const p = document.createElement('p'); p.textContent = 'Nog geen favorieten. Zoek links een zender en klik op Toevoegen.'; $('favorites').append(p); }
   favorites.forEach((f, i) => {
@@ -52,6 +53,7 @@ function renderFavorites() {
     const remove = button('Verwijder', () => { if (confirm(`${f.label} uit de favorieten verwijderen?`)) mutate('/api/favorites/remove', {id:f.id}, 'Favoriet verwijderd.'); });
     actions.append(up, down, rename, remove); row.append(handle, logo, title(`${i+1}. ${f.label}`, f.available ? ((f.name || 'Eigen stream') + (f.source_count > 1 ? ` · ${f.source_count} bronnen, automatisch omschakelen` : '')) : '⚠ Niet meer aanwezig in de M3U — voeg de juiste versie opnieuw toe'), actions); $('favorites').append(row);
   });
+  $('favorites').scrollTop = scrollTop;
 }
 function startFavoriteDrag(event, row, handle) {
   if (busy || !event.isPrimary || event.button !== 0) return;
@@ -64,15 +66,23 @@ function startFavoriteDrag(event, row, handle) {
   list.setPointerCapture(pointer);
   function position() {
     if (!moved) return;
-    const target = Array.from(list.children).find(r => r !== row && y < r.getBoundingClientRect().top + r.getBoundingClientRect().height / 2);
+    const bounds = list.getBoundingClientRect();
+    const insideY = Math.max(bounds.top, Math.min(bounds.bottom, y));
+    const target = Array.from(list.children).find(r => r !== row && insideY < r.getBoundingClientRect().top + r.getBoundingClientRect().height / 2);
     if (row.nextElementSibling !== (target || null)) list.insertBefore(row, target || null);
     Array.from(list.children).forEach((r, i) => { r.querySelector('.row-title strong').textContent = `${i + 1}. ${r.dataset.label}`; });
   }
   function scroll() {
     if (moved) {
       const edge = 90;
-      const delta = y < edge ? -Math.min(18, (edge - y) / 4) : y > window.innerHeight - edge ? Math.min(18, (y - window.innerHeight + edge) / 4) : 0;
-      if (delta) { window.scrollBy(0, delta); position(); }
+      const bounds = list.getBoundingClientRect(), top = Math.max(0, bounds.top), bottom = Math.min(window.innerHeight, bounds.bottom);
+      const delta = y < top + edge ? -Math.min(18, (top + edge - y) / 4) : y > bottom - edge ? Math.min(18, (y - bottom + edge) / 4) : 0;
+      if (delta) {
+        const previous = list.scrollTop;
+        list.scrollTop += delta;
+        if (previous === list.scrollTop && (y < edge || y > window.innerHeight - edge)) window.scrollBy(0, delta);
+        position();
+      }
     }
     frame = requestAnimationFrame(scroll);
   }
@@ -199,3 +209,19 @@ $('recording-input-form').onsubmit = async event => {
 };
 $('recording-input-refresh').onclick = () => mutate('/api/recording-input/refresh',{},'Opname-ingang ververst.');
 $('recording-input-remove').onclick = () => { if (confirm('Tweede opnameaccount verwijderen? Tijdens opnames kun je dan alleen de opgenomen zender bekijken.')) mutate('/api/recording-input',{url:''},'Opnameaccount verwijderd.'); };
+
+// Remember the current section without storing account details.
+const adminPanels = [...document.querySelectorAll('.admin-panel')];
+try {
+  const lastPanel = localStorage.getItem('iptv-admin-panel');
+  const panel = adminPanels.find(item => item.id === lastPanel);
+  if (panel) panel.open = true;
+} catch (_) { /* Settings remain usable when browser storage is disabled. */ }
+for (const panel of adminPanels) panel.addEventListener('toggle', () => {
+  if (panel.open) for (const other of adminPanels) { if (other !== panel) other.open = false; }
+  try {
+    const current = adminPanels.find(item => item.open);
+    if (current) localStorage.setItem('iptv-admin-panel', current.id);
+    else localStorage.removeItem('iptv-admin-panel');
+  } catch (_) {}
+});
