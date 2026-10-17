@@ -46,6 +46,42 @@ class RecordingTests(unittest.TestCase):
         self.assertNotIn('url', self.recorder.list()[0])
         self.assertEqual(len(self.recorder.guide(self.channel)['programmes']), 2)
 
+    def test_readable_filenames_are_safe_unique_and_legacy_compatible(self):
+        row = dict(id='12345678abcdef', directory=self.directory.name,
+                   start=self.now, channel='Veronica / Disney Jr.', title='../Top Gear: deel 2')
+        path = self.recorder.file(row)
+        self.assertEqual(path.parent, Path(self.directory.name))
+        self.assertIn('_Veronica_Disney_Jr_Top_Gear_deel_2_', path.name)
+        self.assertNotEqual(path, self.recorder.file(dict(row, id='87654321abcdef')))
+        legacy = Path(self.directory.name) / (row['id']+'.ts')
+        legacy.write_bytes(b'old recording')
+        self.assertEqual(self.recorder.file(row), legacy)
+        self.assertEqual(legacy.read_bytes(), b'old recording')
+
+    def test_shifted_duplicate_guide_matches_tv_and_recording(self):
+        rows = [(self.now-600, self.now+3600, 'Top Gear'),
+                (self.now-420, self.now+4320, 'Top Gear'),
+                (self.now+3600, self.now+8400, 'Top Gear'),
+                (self.now+4320, self.now+8940, 'Top Gear'),
+                (self.now+8400, self.now+9900, 'Going Dutch'),
+                (self.now+8940, self.now+10740, 'Going Dutch')]
+        with self.store.connect() as db:
+            db.execute('DELETE FROM epg_programmes')
+            db.executemany('INSERT INTO epg_programmes VALUES (?,?,?,?)',
+                           [('test', *row) for row in rows])
+        guide = self.recorder.guide(self.channel)['programmes']
+        self.assertEqual([row['start'] for row in guide],
+                         [rows[i][0] for i in (1, 3, 5)])
+        tv = self.store.programmes(self.now)[self.channel]
+        self.assertEqual(tv['now'], guide[0])
+        self.assertEqual(tv['next'], guide[1])
+        with self.assertRaisesRegex(ValueError, 'niet meer in de gids'):
+            self.schedule(rows[0][0])
+        identifier = self.schedule()
+        with self.store.connect() as db:
+            end = db.execute('SELECT end FROM recordings WHERE id=?', (identifier,)).fetchone()[0]
+        self.assertEqual(end, rows[1][1])
+
     def test_storage_change_keeps_scheduled_location_and_free_space(self):
         identifier = self.schedule()
         old_directory = self.recorder.directory()

@@ -10,6 +10,7 @@ import uuid
 import threading
 import tempfile
 import time
+from .epg import PROGRAMME_VISIBLE
 from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -538,8 +539,8 @@ class Store:
                 arguments = (now, now) if kind == 'now' else (now,)
                 rows = db.execute(f'''SELECT f.id,p.start,p.end,p.title FROM favorites f
                     LEFT JOIN channels c ON c.id=f.id
-                    LEFT JOIN epg_programmes p ON p.rowid=(SELECT rowid FROM epg_programmes
-                       WHERE epg_id=COALESCE((SELECT epg_id FROM favorite_epg WHERE id=f.id),trim(c.tvg_id)) AND {condition} ORDER BY start {direction} LIMIT 1)''', arguments)
+                    LEFT JOIN epg_programmes p ON p.rowid=(SELECT p.rowid FROM epg_programmes p
+                       WHERE epg_id=COALESCE((SELECT epg_id FROM favorite_epg WHERE id=f.id),trim(c.tvg_id)) AND {condition} AND {PROGRAMME_VISIBLE} ORDER BY start {direction} LIMIT 1)''', arguments)
                 for row in rows:
                     item = result.setdefault(row['id'], {'now': None, 'next': None})
                     if row['title'] is not None:

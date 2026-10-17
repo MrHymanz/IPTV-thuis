@@ -208,6 +208,8 @@ class Handler(BaseHTTPRequestHandler):
                 result['id'] = self.server.recordings.schedule(data['channel_id'], data.get('start'))
             elif path == '/api/recordings/cancel':
                 self.server.recordings.cancel(data['id'])
+            elif path == '/api/recordings/resume':
+                result['id']=self.server.recordings.resume(data['id'])
             elif path == '/api/recordings/delete':
                 self.server.recordings.delete(data['id'])
             elif path == '/api/display':

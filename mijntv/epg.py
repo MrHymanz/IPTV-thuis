@@ -15,6 +15,15 @@ from urllib.request import Request, urlopen
 MAX_EPG = 512 * 1024 * 1024
 REFRESH_SECONDS = 4 * 60 * 60
 
+# Some providers publish two shifted schedules for one XMLTV channel. Prefer
+# the later start only for substantially overlapping copies of the same title;
+# consecutive episodes with the same title must remain separate.
+PROGRAMME_VISIBLE = """NOT EXISTS (SELECT 1 FROM epg_programmes duplicate
+    WHERE duplicate.epg_id=p.epg_id AND duplicate.title=p.title
+      AND duplicate.start>p.start AND duplicate.start<p.end
+      AND 2*(min(p.end,duplicate.end)-duplicate.start)
+          > max(p.end-p.start,duplicate.end-duplicate.start))"""
+
 
 def epg_url(source):
     parsed = urlsplit(source)

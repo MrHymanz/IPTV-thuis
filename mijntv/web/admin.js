@@ -176,6 +176,7 @@ async function loadRecordings() {
   for (const item of items) {
     const row = document.createElement('div'); row.className = 'row';
     const actions = document.createElement('div'); actions.className = 'actions';
+    if (['failed','interrupted'].includes(item.state) && item.end > Date.now()/1000) actions.append(button('Opname hervatten', () => mutate('/api/recordings/resume', {id:item.id}, 'Opname wordt hervat in een nieuw deel.')));
     if (['queued','recording'].includes(item.state)) actions.append(button(item.state === 'recording' ? 'Opname stoppen' : 'Annuleren', () => mutate('/api/recordings/cancel', {id:item.id}, 'Opname gestopt of geannuleerd.')));
     else actions.append(button('Verwijderen', () => { if (confirm(`Opname “${item.title}” definitief verwijderen?`)) mutate('/api/recordings/delete', {id:item.id}, 'Opname verwijderd.'); }));
     if (item.playable && item.state !== 'recording') { const link = document.createElement('a'); link.href = '/api/recordings/file/' + item.id; link.textContent = 'Downloaden'; actions.append(link); }

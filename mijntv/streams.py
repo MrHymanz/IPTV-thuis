@@ -3,13 +3,16 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import queue
+import logging
 import secrets
 import socket
 import subprocess
 import tempfile
 import threading
+import time
 from urllib.parse import parse_qsl, urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError,URLError
 
 
 class RecordingConflict(ValueError):
@@ -29,6 +32,8 @@ class Feed:
         self.recording = False
         self.response = None
         self.process = None
+        self.bytes_read = 0
+        self.last_data = time.monotonic()
 
     def subscribe(self):
         with self.lock:
@@ -53,11 +58,14 @@ class Feed:
         with self.lock:
             if self.closed:
                 return
+            self.bytes_read += len(chunk)
+            self.last_data = time.monotonic()
             self.recent.append(chunk)
             for consumer in list(self.consumers):
                 try:
                     consumer.put_nowait(chunk)
                 except queue.Full:
+                    logging.getLogger('mijntv.stream').info('stream_consumer_slow source_id=%s',self.source['id'])
                     # Disconnect a slow consumer without interrupting the others.
                     self.consumers.discard(consumer)
                     while True:
@@ -69,6 +77,7 @@ class Feed:
 
     def read(self):
         manifest = None
+        reason = 'eof'
         try:
             address, _, raw_headers = self.source['url'].partition('|')
             headers = {'User-Agent': 'mpv', 'Accept-Encoding': 'identity'}
@@ -108,19 +117,30 @@ class Feed:
                 if not chunk:
                     break
                 self.publish(chunk)
+        except HTTPError as error:
+            reason = 'http_'+str(error.code)
+        except (TimeoutError,socket.timeout):
+            reason = 'read_timeout'
+        except URLError as error:
+            reason = 'read_timeout' if isinstance(error.reason,TimeoutError) else 'connection_error'
+        except OSError:
+            reason = 'io_error'
+        except ValueError:
+            reason = 'unsupported_input'
         except Exception:
-            # Never log exception strings containing provider URLs/credentials.
-            pass
+            reason = 'internal_error'
         finally:
-            self.close()
+            self.close(reason)
             if manifest:
                 Path(manifest.name).unlink(missing_ok=True)
 
-    def close(self):
+    def close(self, reason='closed'):
         with self.lock:
             if self.closed:
                 return
             self.closed = True
+            logging.getLogger('mijntv.stream').info('stream_feed_end source_id=%s reason=%s bytes=%s idle_seconds=%.1f',
+                self.source['id'],reason,self.bytes_read,time.monotonic()-self.last_data)
             for consumer in self.consumers:
                 if consumer.full():
                     try:
@@ -235,7 +255,7 @@ class StreamHub:
     def required_channel(self):
         with self.lock:
             feed = self.slots.get('primary')
-            return dict(feed.channel) if feed and feed.recording else None
+            return dict(feed.channel,stream_token=feed.token) if feed and feed.recording else None
 
     def close(self):
         with self.lock:

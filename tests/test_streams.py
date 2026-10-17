@@ -89,7 +89,7 @@ class SharedStreamTests(unittest.TestCase):
             try:
                 deadline=time.monotonic()+8
                 while time.monotonic()<deadline:
-                    path=output/(rid+'.ts')
+                    path=Path(rec.process.args[-1])
                     if path.exists() and path.stat().st_size>10000: break
                     time.sleep(.1)
                 self.assertEqual(self.requests,1)
@@ -103,6 +103,54 @@ class SharedStreamTests(unittest.TestCase):
                 probe=subprocess.run(['ffprobe','-v','error','-show_entries','stream=codec_name','-of','csv=p=0',str(rec.playback(rid))],capture_output=True,text=True,check=True)
                 self.assertIn('mpeg2video',probe.stdout)
                 self.assertIsNone(self.hub.required_channel())
+            finally:
+                view.close();rec.close()
+
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg integration')
+    def test_real_recording_resumes_after_a_shared_feed_disconnect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sample=Path(directory)/'sample.ts'
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=blue:s=160x90:r=10',
+                            '-t','2','-c:v','mpeg2video','-f','mpegts',str(sample)],check=True)
+            self.payload=sample.read_bytes()
+            output=Path(directory)/'recordings';output.mkdir()
+            store=Store(directory);store.set_setting('recording_directory',str(output))
+            store.import_playlist('#EXTM3U\n#EXTINF:-1 tvg-id="one",NPO 1\n'+self.source['url'])
+            identifier=store.catalog()['items'][0]['id'];store.add_favorite(identifier)
+            rec=Recordings(store,self.hub)
+            channel=store.favorites(playback=True)[0]
+            view=urlopen(rec.viewing_url(channel,channel['sources'][0]),timeout=3)
+            view.read(188)
+            first_id=rec.schedule(identifier);rec.step()
+            try:
+                first_file=Path(rec.process.args[-1])
+                deadline=time.monotonic()+8
+                while time.monotonic()<deadline and (not first_file.exists() or first_file.stat().st_size<10000):
+                    time.sleep(.1)
+                self.assertTrue(first_file.exists())
+                prefix=first_file.read_bytes()[:64]
+                self.hub.slots['primary'].close('test_disconnect')
+                view.close()
+                second_id=None
+                deadline=time.monotonic()+12
+                while time.monotonic()<deadline:
+                    rec.step()
+                    if rec.active and rec.active!=first_id:
+                        second_id=rec.active
+                        second_file=Path(rec.process.args[-1])
+                        if second_file.exists() and second_file.stat().st_size>10000:
+                            break
+                    time.sleep(.1)
+                self.assertIsNotNone(second_id)
+                self.assertGreater(second_file.stat().st_size,10000)
+                self.assertEqual(self.requests,2,'One provider connection per sequential attempt')
+                self.assertEqual(first_file.read_bytes()[:64],prefix)
+                self.assertEqual(next(r for r in rec.list() if r['id']==first_id)['state'],'interrupted')
+                rec.stop_for_zap();rec.process.wait(timeout=5);rec.step()
+                for path in (first_file,second_file):
+                    probe=subprocess.run(['ffprobe','-v','error','-show_entries','stream=codec_name','-of','csv=p=0',str(path)],capture_output=True,text=True,check=True)
+                    self.assertIn('mpeg2video',probe.stdout)
             finally:
                 view.close();rec.close()
 

@@ -40,7 +40,7 @@ class RecordingGuardTests(unittest.TestCase):
         self.tv.choose(1)
         self.tv.choose=Mock()
         self.tv.confirm_recording_zap(1)
-        self.tv.recordings.cancel.assert_called_once_with('recording-id')
+        self.tv.recordings.stop_for_zap.assert_called_once_with()
         self.tv.choose.assert_not_called()
         self.tv.root.after.assert_called_once_with(100,self.tv.finish_recording_zap)
         self.tv.recordings.required_channel.return_value=None

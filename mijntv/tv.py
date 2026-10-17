@@ -681,6 +681,7 @@ class TV:
                 if source_id:
                     self.active_source_id=source_id
                     self.tried_sources.add(source_id)
+                self.playing_stream_token=self.recordings.viewing_token()
             self.player.play(url)
             self.root.focus_force()
             self.loading_started = time.monotonic()
@@ -764,11 +765,10 @@ class TV:
         if self.recording_zap_stopping:
             return
         self.recording_zap_stopping = True
-        if self.recordings.active:
-            try:
-                self.recordings.cancel(self.recordings.active)
-            except ValueError:
-                pass
+        try:
+            self.recordings.stop_for_zap()
+        except ValueError:
+            pass
         self.recording_zap_text.configure(text='Opname stoppen… Het opgenomen deel blijft bewaard.')
         self.finish_recording_zap()
 
@@ -872,6 +872,14 @@ class TV:
     def _poll_player(self):
         self.update_watch_clock()
         required=self.recordings.required_channel() if self.recordings else None
+        if (isinstance(required,dict) and required.get('stream_token') and self.watching and
+                not self.playing_recording and self.channels and
+                self.channels[self.selected]['id']==required['id'] and
+                getattr(self,'playing_stream_token',None)!=required['stream_token']):
+            self.recording_recovery_needed=False
+            self.start_stream(self.channels[self.selected])
+            self.show_error('Opname hersteld. Het eerdere deel blijft bewaard.')
+            self.root.after(5000,self.error.place_forget)
         if getattr(self,'recording_recovery_needed',False) and not isinstance(required,dict):
             self.recording_recovery_needed=False
             self.recover_stream('recording_source_ended',self.player.snapshot() if self.player else None)
