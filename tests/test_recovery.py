@@ -40,6 +40,7 @@ class RecoveryTests(unittest.TestCase):
 
     def setUp(self):
         self.tv=TV.__new__(TV)
+        self.tv.recordings=None
         self.tv.watching=True;self.tv.playing_recording=None
         self.tv.channels=[{'url':'https://private.example/secret'}];self.tv.selected=0
         self.tv.recovery_attempts=[];self.tv.recovery_pending=None

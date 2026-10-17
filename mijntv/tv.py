@@ -26,6 +26,9 @@ class TV:
         self.panel_mode = None
         self.panel_selected = 0
         self.menu_open = False
+        self.recording_zap_target = None
+        self.recording_zap_choice = 0
+        self.recording_zap_stopping = False
         self.epg_notice_seen = deque(maxlen=256)
         self.epg_notice_key = None
         self.epg_notice_until = 0
@@ -144,6 +147,16 @@ class TV:
         self.epg_notice_title = self.label(self.epg_notice, '', 22, bold=True)
         self.epg_notice_title.configure(bg='#1c2c3a', anchor='w', justify='left')
         self.epg_notice_title.pack(fill='x', pady=(7, 0))
+        self.recording_zap_dialog = tk.Frame(self.content,bg=TILE,highlightthickness=2,
+                                              highlightbackground=AMBER,padx=28,pady=24)
+        self.recording_zap_text = self.label(self.recording_zap_dialog,'',23,bold=True)
+        self.recording_zap_text.configure(bg=TILE,wraplength=int(650*self.scale),justify='left')
+        self.recording_zap_text.pack(pady=(0,18))
+        self.recording_zap_buttons = [self.small_button(self.recording_zap_dialog,label,
+            lambda choice=i:self.confirm_recording_zap(choice)) for i,label in enumerate(
+                ('Blijven kijken','Opname stoppen en zappen'))]
+        for button in self.recording_zap_buttons:
+            button.pack(side='left',padx=10)
         self.build_menu()
         self.root.bind('<Key>', self.key)
         self.root.bind('<F11>', self.toggle_fullscreen)
@@ -593,6 +606,14 @@ class TV:
         if not channel['available']:
             self.show_error('Deze zender is niet beschikbaar. Kies een andere zender.')
             return
+        required = self.recordings.required_channel() if self.recordings else None
+        if isinstance(required,dict) and required['id'] != channel['id']:
+            self.recording_zap_target = channel['id']
+            self.recording_zap_choice = 0
+            self.recording_zap_text.configure(text=f'Opname bezig op {required["label"]}\n\n'
+                'Met dit account kun je tijdens de opname geen andere zender kijken.')
+            self.render_recording_zap()
+            return
         self.epg_notice.place_forget()
         self.epg_notice_key = None
         self.loading = False
@@ -651,10 +672,21 @@ class TV:
                 channel = source
             self.player.watchdog_enabled = not self.playing_recording
             logging.getLogger('mijntv.stream').info('stream_start channel_index=%s', self.selected)
-            self.player.play(channel['url'])
+            url = self.recordings.viewing_url(self.channels[self.selected],channel) if self.recordings and not self.playing_recording else channel['url']
+            if self.recordings and not self.playing_recording:
+                source_id=self.recordings.viewing_source_id()
+                if source_id:
+                    self.active_source_id=source_id
+                    self.tried_sources.add(source_id)
+            self.player.play(url)
             self.root.focus_force()
             self.loading_started = time.monotonic()
             self.loading = True
+        except ValueError as error:
+            self.loading = False
+            if self.recordings and isinstance(self.recordings.required_channel(),dict):
+                self.recording_recovery_needed=True
+            self.show_error(str(error))
         except (RuntimeError, OSError):
             if not self.playing_recording:
                 self.loading_started = time.monotonic() - 51
@@ -673,6 +705,7 @@ class TV:
         self.choose(available[i])
 
     def go_home(self):
+        self.close_recording_zap()
         self.epg_notice.place_forget()
         self.epg_notice_key = None
         if self.pending_zap:
@@ -690,6 +723,8 @@ class TV:
                 self.player.stop()
             except RuntimeError:
                 pass
+        if self.recordings:
+            self.recordings.stop_view()
         self.banner.place_forget()
         self.error.place_forget()
         self.home.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -702,6 +737,46 @@ class TV:
         if self.menu_open:
             self.menu.lift()
         self.message_until = time.monotonic()+seconds
+
+    def render_recording_zap(self):
+        for i,button in enumerate(self.recording_zap_buttons):
+            button.configure(bg=AMBER if i==self.recording_zap_choice else TILE,
+                             fg=BG if i==self.recording_zap_choice else WHITE)
+        self.recording_zap_dialog.place(relx=.5,rely=.5,anchor='center')
+        self.recording_zap_dialog.lift()
+
+    def close_recording_zap(self):
+        if hasattr(self,'recording_zap_dialog'):
+            self.recording_zap_dialog.place_forget()
+        self.recording_zap_target = None
+        self.recording_zap_stopping = False
+
+    def confirm_recording_zap(self, choice):
+        if not choice:
+            self.close_recording_zap()
+            return
+        if self.recording_zap_stopping:
+            return
+        self.recording_zap_stopping = True
+        if self.recordings.active:
+            try:
+                self.recordings.cancel(self.recordings.active)
+            except ValueError:
+                pass
+        self.recording_zap_text.configure(text='Opname stoppen… Het opgenomen deel blijft bewaard.')
+        self.finish_recording_zap()
+
+    def finish_recording_zap(self):
+        if not self.recording_zap_target:
+            return
+        if self.recordings.required_channel():
+            self.root.after(100,self.finish_recording_zap)
+            return
+        target=self.recording_zap_target
+        self.close_recording_zap()
+        index=next((i for i,c in enumerate(self.channels) if c['id']==target),None)
+        if index is not None:
+            self.choose(index)
 
     def show_error(self, text):
         self.error.configure(text=text, wraplength=self.root.winfo_width()-100)
@@ -745,6 +820,14 @@ class TV:
     def recover_stream(self, reason, snapshot=None):
         if not self.watching or self.playing_recording or not self.channels:
             return
+        required = self.recordings.required_channel() if self.recordings else None
+        if isinstance(required,dict):
+            # Reconnect to the pinned local feed, never start a second provider
+            # connection or silently change the source of an active recording.
+            self.loading = False
+            self.recording_recovery_needed = True
+            self.show_error('Opname bezig. De gedeelde bron buffert; kies een andere zender om de opname te stoppen.')
+            return
         if reason == 'black_picture':
             self.store.forget_source(self.channels[self.selected]['id'], self.active_source_id)
             self.remembered_source = None
@@ -781,6 +864,17 @@ class TV:
             self.root.after(100, self.poll_player)
 
     def _poll_player(self):
+        required=self.recordings.required_channel() if self.recordings else None
+        if getattr(self,'recording_recovery_needed',False) and not isinstance(required,dict):
+            self.recording_recovery_needed=False
+            self.recover_stream('recording_source_ended',self.player.snapshot() if self.player else None)
+        if (isinstance(required,dict) and self.watching and not self.playing_recording and
+                self.channels and self.channels[self.selected]['id']!=required['id']):
+            index=next((i for i,c in enumerate(self.channels) if c['id']==required['id']),None)
+            if index is not None:
+                self.choose(index)
+                self.show_error('Geplande opname gestart. Kijken en opnemen delen nu deze zender.')
+                self.root.after(5000,self.error.place_forget)
         if self.recovery_pending and self.watching and time.monotonic()-self.recovery_attempts[-1] >= 60:
             reason, snapshot = self.recovery_pending
             self.recovery_pending = None
@@ -895,6 +989,17 @@ class TV:
 
     def key(self, event):
         key = event.keysym
+        if getattr(self,'recording_zap_target',None):
+            if self.recording_zap_stopping:
+                return 'break'
+            if key in ('Escape','BackSpace','XF86Back'):
+                self.close_recording_zap()
+            elif key in ('Left','Right','Up','Down'):
+                self.recording_zap_choice = 1-self.recording_zap_choice
+                self.render_recording_zap()
+            elif key in ('Return','KP_Enter','space'):
+                self.confirm_recording_zap(self.recording_zap_choice)
+            return 'break'
         if key in ('XF86AudioRaiseVolume', 'XF86AudioLowerVolume', 'XF86AudioMute'):
             self.change_volume({'XF86AudioRaiseVolume':5, 'XF86AudioLowerVolume':-5}.get(key))
             return 'break'

@@ -8,7 +8,9 @@ import tempfile
 import threading
 import time
 import uuid
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, parse_qs, urlsplit
+from .store import fetch_playlist, iter_m3u, Store
+from .maintenance import BACKGROUND_STARTUP_DELAY
 
 MIN_FREE = 512 * 1024 * 1024
 STATES = {'queued': 'Gepland', 'recording': 'Neemt op', 'completed': 'Opgenomen',
@@ -16,8 +18,10 @@ STATES = {'queued': 'Gepland', 'recording': 'Neemt op', 'completed': 'Opgenomen'
 
 
 class Recordings:
-    def __init__(self, store):
+    def __init__(self, store, streams=None):
         self.store = store
+        self.streams = streams
+        self.input_refreshing = False
         self.lock = threading.RLock()
         self.process = None
         self.active = None
@@ -33,6 +37,113 @@ class Recordings:
                 id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel TEXT NOT NULL,
                 title TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
                 state TEXT NOT NULL, directory TEXT NOT NULL, error TEXT NOT NULL DEFAULT '')''')
+            db.execute('''CREATE TABLE IF NOT EXISTS recording_channels (
+                id TEXT PRIMARY KEY,name TEXT NOT NULL,group_name TEXT NOT NULL,url TEXT NOT NULL,tvg_id TEXT NOT NULL)''')
+
+    def input_settings(self):
+        with self.store.connect() as db:
+            count=db.execute('SELECT count(*) FROM recording_channels').fetchone()[0]
+        return {'configured':bool(self.store.setting('recording_source')),'channels':count,
+                'error':self.store.setting('recording_source_error')}
+
+    def save_input(self, source):
+        if not isinstance(source,str) or len(source)>16384:
+            raise ValueError('Ongeldig opnameadres.')
+        source=source.strip()
+        with self.lock:
+            if self.active:
+                raise ValueError('Stop eerst de actieve opname voordat je het opnameaccount wijzigt.')
+        if not source:
+            with self.store.connect() as db:
+                db.execute('DELETE FROM recording_channels')
+                db.execute("DELETE FROM settings WHERE key IN ('recording_source','recording_source_refreshed','recording_source_error')")
+            return self.input_settings()
+        def identity(address):
+            p=urlsplit(address); q=parse_qs(p.query)
+            return (p.hostname,p.port,q.get('username',[p.username])[-1])
+        primary=self.store.setting('source')
+        if source==primary or (identity(source)[2] and identity(source)==identity(primary)):
+            raise ValueError('Gebruik een tweede account, niet hetzelfde account als voor live-tv.')
+        self._import_input(source)
+        return self.input_settings()
+
+    def _import_input(self, source):
+        previous=self.store.setting('recording_source')
+        favorites=self.store.favorites(playback=True)
+        epg={f['epg_id'] for f in favorites if f.get('epg_id')}
+        groups={s.get('group_name','') for f in favorites for s in f.get('sources',[f])}
+        rows=[]
+        with fetch_playlist(source,directory=str(Path(self.store.path).parent)) as text:
+            for row in iter_m3u(text):
+                if row[4].strip() in epg or row[2] in groups:
+                    rows.append((row[0],row[1],row[2],row[3],row[4].strip()))
+        if not rows:
+            raise ValueError('Geen passende zenders gevonden voor de favorieten. De vorige opname-ingang blijft behouden.')
+        with self.lock, self.store.connect() as db:
+            if self.store.setting('recording_source')!=previous or (self.active and source!=previous):
+                raise ValueError('De opname-ingang is ondertussen gewijzigd of er is een opname gestart. Probeer opnieuw.')
+            db.execute('DELETE FROM recording_channels')
+            db.executemany('INSERT INTO recording_channels VALUES (?,?,?,?,?)',rows)
+            for k,v in [('recording_source',source),('recording_source_refreshed',str(time.time())),('recording_source_error','')]:
+                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,v))
+
+    def refresh_input_background(self):
+        source=self.store.setting('recording_source')
+        try:
+            due=time.time()-float(self.store.setting('recording_source_refreshed','0'))>=21600
+        except ValueError:
+            due=True
+        if not source or not due or self.input_refreshing:
+            return
+        self.input_refreshing=True
+        def refresh():
+            try:
+                self._import_input(source)
+            except Exception:
+                if self.store.setting('recording_source')==source:
+                    self.store.set_setting('recording_source_error','Verversen van de opname-ingang mislukt; de vorige lijst blijft behouden.')
+                    self.store.set_setting('recording_source_refreshed',str(time.time()-21600+900))
+            finally:
+                self.input_refreshing=False
+        threading.Thread(target=refresh,daemon=True).start()
+
+    def recording_source(self, channel):
+        if not self.store.setting('recording_source'):
+            return 'primary',(channel.get('sources') or [channel])[0]
+        with self.store.connect() as db:
+            rows=[dict(r) for r in db.execute('SELECT * FROM recording_channels')]
+        sources=channel.get('sources') or [channel]
+        # Prefer the same group/name as the working live source. Never use the
+        # viewing account as a silent fallback when the second account is missing.
+        for source in sources:
+            matching=[r for r in rows if r['group_name']==source.get('group_name') and
+                      Store._channel_name(r['name'])==Store._channel_name(source.get('name','')) and
+                      (not r['tvg_id'] or not channel.get('epg_id') or r['tvg_id']==channel['epg_id'])]
+            exact=[r for r in matching if r['name']==source.get('name')]
+            matching=exact or matching
+            if len(matching)==1:
+                return 'secondary',matching[0]
+        matching=[r for r in rows if channel.get('epg_id') and r['tvg_id']==channel['epg_id']]
+        if len(matching)==1:
+            return 'secondary',matching[0]
+        raise ValueError('Deze zender ontbreekt of is dubbelzinnig in het opnameaccount. Ververs de opname-ingang in het beheer.')
+
+    def required_channel(self):
+        return self.streams.required_channel() if self.streams else None
+
+    def viewing_url(self, channel, source):
+        if urlsplit(source['url'].partition('|')[0]).scheme not in ('http','https'):
+            return source['url']
+        return self.streams.view(channel,source) if self.streams else source['url']
+
+    def stop_view(self):
+        if self.streams:
+            self.streams.stop_view()
+
+    def viewing_source_id(self):
+        if self.streams:
+            with self.streams.lock:
+                return self.streams.viewer.source['id'] if self.streams.viewer else None
 
     def directory(self):
         default = os.environ.get('IPTV_RECORDING_DIR', str(Path(self.store.path).parent / 'recordings'))
@@ -99,15 +210,14 @@ class Recordings:
             path = self.validate_directory(self.directory(), create=True)
             if shutil.disk_usage(path).free < MIN_FREE:
                 raise ValueError('Er is minder dan 512 MB vrij op de opnameschijf.')
+            channel = next((f for f in self.store.favorites(playback=True) if f['id']==channel_id),None)
             with self.store.connect() as db:
-                channel = db.execute('''SELECT f.label,c.url,c.tvg_id FROM favorites f
-                    JOIN channels c ON c.id=f.id WHERE f.id=?''', (channel_id,)).fetchone()
                 if not channel or not channel['url']:
                     raise ValueError('Deze zender is niet beschikbaar.')
                 if programme_start is None:
                     programme = db.execute('''SELECT start,end,title FROM epg_programmes
                         WHERE epg_id=? AND start<=? AND end>? ORDER BY start DESC LIMIT 1''',
-                        (channel['tvg_id'].strip(), now, now)).fetchone()
+                        (channel['epg_id'].strip(), now, now)).fetchone()
                     if programme is None:
                         start, end, title = now, now + 3600, 'Handmatige opname (1 uur)'
                     else:
@@ -117,7 +227,7 @@ class Recordings:
                         raise ValueError('Ongeldig programma.')
                     programme = db.execute('''SELECT start,end,title FROM epg_programmes
                         WHERE epg_id=? AND start=? AND end>?''',
-                        (channel['tvg_id'].strip(), programme_start, now)).fetchone()
+                        (channel['epg_id'].strip(), programme_start, now)).fetchone()
                     if not programme:
                         raise ValueError('Dit programma staat niet meer in de gids of is al afgelopen.')
                     start, end, title = programme['start'], programme['end'], programme['title']
@@ -193,15 +303,20 @@ class Recordings:
 
     def start(self, row):
         manifest = None
+        pinned = False
         try:
             path = self.validate_directory(Path(row['directory']), create=True)
             if shutil.disk_usage(path).free < MIN_FREE:
                 raise ValueError('Opnameschijf bijna vol; opname niet gestart.')
-            with self.store.connect() as db:
-                channel = db.execute('SELECT url FROM channels WHERE id=?', (row['channel_id'],)).fetchone()
+            channel = next((f for f in self.store.favorites(playback=True) if f['id']==row['channel_id']),None)
             if not channel:
                 raise ValueError('Zender niet meer beschikbaar.')
-            address, _, raw_headers = channel['url'].partition('|')
+            slot, source = self.recording_source(channel)
+            address, _, raw_headers = source['url'].partition('|')
+            if self.streams:
+                feed = self.streams.acquire(slot,channel,source,recording=True)
+                pinned = True
+                address, raw_headers = self.streams.url(feed), ''
             if urlsplit(address).scheme not in ('http', 'https') or '\n' in address or '\r' in address:
                 raise ValueError('Dit streamtype kan niet worden opgenomen.')
             def quote(value):
@@ -223,6 +338,8 @@ class Recordings:
             self.stopping = None
             self.update(row['id'], 'recording')
         except Exception as error:
+            if pinned:
+                self.streams.release_recording()
             if manifest:
                 manifest.close()
                 Path(manifest.name).unlink(missing_ok=True)
@@ -257,6 +374,8 @@ class Recordings:
                     state, error = 'failed', 'De stream is voortijdig gestopt. Een gedeeltelijke opname blijft bewaard.'
                 self.update(self.active, state, error)
                 Path(self.manifest).unlink(missing_ok=True)
+                if self.streams:
+                    self.streams.release_recording()
                 self.process, self.active, self.manifest, self.stopping = None, None, None, None
             with self.store.connect() as db:
                 db.execute("UPDATE recordings SET state='failed',error='Starttijd gemist: de app stond uit.' WHERE state='queued' AND end<=?", (now,))
@@ -268,9 +387,12 @@ class Recordings:
         # Active processes cannot survive application/container restart. Keep partial files.
         with self.store.connect() as db:
             db.execute("UPDATE recordings SET state='interrupted',error='Onderbroken door een herstart; het gedeeltelijke bestand blijft bewaard.' WHERE state='recording'")
+        maintenance_at=time.monotonic()+BACKGROUND_STARTUP_DELAY
         while not stop.is_set():
             try:
                 self.step()
+                if time.monotonic()>=maintenance_at:
+                    self.refresh_input_background()
             except Exception:
                 print('Opnamecontrole mislukt; wordt opnieuw geprobeerd.', flush=True)
             stop.wait(2)
@@ -288,4 +410,6 @@ class Recordings:
                 state, error, _ = self.stopping
                 self.update(self.active, state, error)
                 Path(self.manifest).unlink(missing_ok=True)
+                if self.streams:
+                    self.streams.release_recording()
                 self.process, self.active, self.manifest, self.stopping = None, None, None, None

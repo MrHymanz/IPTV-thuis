@@ -488,7 +488,7 @@ class Store:
             keys = sorted({row['epg_id'] for row in rows if row['epg_id']})
             candidates = {}
             if keys:
-                for row in db.execute('SELECT id,group_name,url,trim(tvg_id) AS epg_id FROM channels WHERE trim(tvg_id) IN ('+
+                for row in db.execute('SELECT id,name,group_name,url,trim(tvg_id) AS epg_id FROM channels WHERE trim(tvg_id) IN ('+
                                       ','.join('?' for _ in keys)+') ORDER BY group_name,id', keys):
                     candidates.setdefault(row['epg_id'], []).append(dict(row))
             pins = {}
@@ -505,7 +505,7 @@ class Store:
                 alternatives.sort(key=lambda c: (preferred.index(c['id']) if c['id'] in preferred else len(preferred),
                                                   c['group_name'],c['id']))
                 sources, used = [], set()
-                primary = {'id':item['id'], 'group_name':item['group_name'], 'url':item['url']}
+                primary = {'id':item['id'], 'name':item['name'], 'group_name':item['group_name'], 'url':item['url']}
                 for source in [primary]+alternatives:
                     if source['url'] and source['url'] not in used:
                         used.add(source['url'])

@@ -156,7 +156,8 @@ $('display-form').onsubmit = event => {
 
 function recordingTime(timestamp) { return new Date(timestamp*1000).toLocaleString('nl-NL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); }
 async function loadRecordings() {
-  const [storage, items] = await Promise.all([api('/api/storage'), api('/api/recordings')]);
+  const [storage, items, input] = await Promise.all([api('/api/storage'), api('/api/recordings'), api('/api/recording-input')]);
+  $('recording-input-status').textContent = input.configured ? `Apart opnameaccount ingesteld · ${input.channels} zenderbronnen beschikbaar. ${input.error || ''}` : 'Geen tweede account: kijken en opnemen delen dezelfde zender.';
   if (document.activeElement !== $('recording-directory')) $('recording-directory').value = storage.directory;
   $('storage-status').textContent = storage.available ? `${(storage.free/1e9).toFixed(1)} GB vrij van ${(storage.total/1e9).toFixed(1)} GB. Deze vrije ruimte wordt ook op het tv-hoofdscherm getoond.` : storage.error;
   if (!storage.recorder_available) $('storage-status').textContent += ' FFmpeg is nog niet geïnstalleerd.';
@@ -187,3 +188,14 @@ $('guide-load').onclick = async () => {
   } catch (error) { message(error.message, true); }
 };
 setInterval(() => { if (!busy) loadRecordings().catch(() => {}); }, 10000);
+
+$('recording-input-form').onsubmit = async event => {
+  event.preventDefault();
+  const server=$('recording-input-server').value.trim(), url=$('recording-input-url').value.trim();
+  if (!server && !url) { $('recording-input-status').textContent='Vul een M3U-adres of Xtream-inloggegevens in.'; return; }
+  const data=server ? {server,username:$('recording-input-user').value,password:$('recording-input-password').value} : {url};
+  await mutate('/api/recording-input', data, 'Opnameaccount verwerkt.');
+  $('recording-input-url').value=''; $('recording-input-password').value='';
+};
+$('recording-input-refresh').onclick = () => mutate('/api/recording-input/refresh',{},'Opname-ingang ververst.');
+$('recording-input-remove').onclick = () => { if (confirm('Tweede opnameaccount verwijderen? Tijdens opnames kun je dan alleen de opgenomen zender bekijken.')) mutate('/api/recording-input',{url:''},'Opnameaccount verwijderd.'); };

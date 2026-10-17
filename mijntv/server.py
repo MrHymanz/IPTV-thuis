@@ -14,6 +14,7 @@ from .logos import LogoCache
 from .epg import EPG
 from .display import Display
 from .recordings import Recordings
+from .streams import StreamHub
 
 
 def hash_password(password, salt):
@@ -46,8 +47,14 @@ class AdminServer(ThreadingHTTPServer):
         self.logos = LogoCache(Path(store.path).parent)
         self.epg = EPG(store)
         self.display = Display(store)
-        self.recordings = Recordings(store)
         super().__init__(address, Handler)
+        self.streams = StreamHub()
+        self.recordings = Recordings(store,self.streams)
+
+    def server_close(self):
+        if hasattr(self,'streams'):
+            self.streams.close()
+        super().server_close()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -102,6 +109,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, self.server.recordings.storage())
             elif parts.path == '/api/recordings':
                 self.reply(200, self.server.recordings.list())
+            elif parts.path == '/api/recording-input':
+                self.reply(200,self.server.recordings.input_settings())
             elif parts.path == '/api/guide':
                 self.reply(200, self.server.recordings.guide(params.get('id', [''])[0]))
             elif parts.path.startswith('/api/recordings/file/'):
@@ -187,6 +196,14 @@ class Handler(BaseHTTPRequestHandler):
                     result['imported'] = store.import_playlist(text)
             elif path == '/api/storage':
                 result['storage'] = self.server.recordings.save_storage(data['directory'])
+            elif path == '/api/recording-input':
+                source = xtream_playlist_url(data['server'],data['username'],data['password']) if data.get('server') else data.get('url','')
+                result['input'] = self.server.recordings.save_input(source)
+            elif path == '/api/recording-input/refresh':
+                source=store.setting('recording_source')
+                if not source:
+                    raise ValueError('Stel eerst een apart opnameaccount in.')
+                result['input']=self.server.recordings.save_input(source)
             elif path == '/api/recordings/schedule':
                 result['id'] = self.server.recordings.schedule(data['channel_id'], data.get('start'))
             elif path == '/api/recordings/cancel':
