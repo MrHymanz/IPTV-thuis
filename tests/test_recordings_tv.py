@@ -72,7 +72,7 @@ class RecordingTVTests(unittest.TestCase):
                 self.assertEqual(tv.playing_recording,identifier)
                 player.play.assert_called_with(str(recordings.playback(identifier)))
                 key('Return'); player.command.assert_called_with('cycle','pause')
-                key('Right'); player.command.assert_called_with('seek',30,'relative')
+                key('Right'); player.command.assert_called_with('seek',15,'relative')
                 key('Escape'); self.assertEqual(tv.panel_mode,'recordings')
                 self.assertFalse(tv.watching)
                 key('Escape'); self.assertIsNone(tv.panel_mode)

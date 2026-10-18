@@ -58,6 +58,8 @@ class Player:
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         self.command('request_log_messages', 'warn')
+        for index, name in enumerate(('time-pos', 'duration', 'pause')):
+            self.command('observe_property', index, name)
         threading.Thread(target=self._monitor, daemon=True).start()
         threading.Thread(target=self._monitor_picture, daemon=True).start()
 
@@ -74,6 +76,9 @@ class Player:
                                 with self.status_lock:
                                     self.status[key] = message.get('data')
                                     self.status['_received'] = time.monotonic()
+                        if message.get('event') == 'property-change' and message.get('name') in ('time-pos', 'duration', 'pause'):
+                            with self.status_lock:
+                                self.status[message['name']] = message.get('data')
                         if message.get('event') == 'log-message':
                             text = message.get('text', '').lower()
                             category = 'decoder' if any(word in text for word in ('decode', 'corrupt', 'invalid nal')) else 'network' if any(word in text for word in ('http', 'connection', 'timed out', 'tls')) else 'player'

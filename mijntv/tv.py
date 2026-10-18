@@ -34,6 +34,11 @@ class TV:
         self.epg_notice_until = 0
         self.menu_selected = 0
         self.playing_recording = None
+        self.seek_key = None
+        self.seek_release_timer = None
+        self.seek_visible_until = 0
+        self.seek_started = self.seek_last = 0
+        self.seek_step = 15
         self.display_settings = Display(store).settings()
         self.restart_requested = False
         self.volume = max(0, min(100, int(store.setting('volume', '100'))))
@@ -160,8 +165,17 @@ class TV:
                 ('Blijven kijken','Opname stoppen en zappen'))]
         for button in self.recording_zap_buttons:
             button.pack(side='left',padx=10)
+        self.recording_progress = tk.Frame(self.content, bg=BG, padx=24, pady=12)
+        self.recording_position = self.label(self.recording_progress, '', 18, color=WHITE)
+        self.recording_position.pack(fill='x')
+        self.recording_bar = tk.Canvas(self.recording_progress, height=12, bg=TILE,
+                                       highlightthickness=0)
+        self.recording_bar.pack(fill='x', pady=(8, 0))
         self.build_menu()
         self.root.bind('<Key>', self.key)
+        self.root.bind('<KeyRelease>', self.release_seek)
+        self.root.bind('<FocusOut>', lambda event: self.reset_seek())
+        self.root.after(250, self.update_recording_progress)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
         self.root.protocol('WM_DELETE_WINDOW', self.root.destroy)
@@ -586,7 +600,7 @@ class TV:
                 self.watching = True
                 self.playing_recording = item['id']
                 self.banner_label.configure(text=item['title'])
-                self.banner_programme.configure(text='OK: pauze · Links/rechts: 30 seconden terug/vooruit · Terug: opnames')
+                self.banner_programme.configure(text='OK: pauze · Links/rechts: spoelen · Vasthouden: sneller · Terug: opnames')
                 self.show_banner(60)
                 self.start_stream({'url': str(path)})
             else:
@@ -709,6 +723,9 @@ class TV:
         self.choose(available[i])
 
     def go_home(self):
+        self.reset_seek()
+        self.seek_visible_until = 0
+        self.recording_progress.place_forget()
         self.watch_clock_until=0
         if hasattr(self,'watch_clock'):
             self.watch_clock.place_forget()
@@ -1028,6 +1045,79 @@ class TV:
         self.volume_timer = None
         self.volume_label.place_forget()
 
+    def reset_seek(self):
+        if self.seek_release_timer is not None:
+            self.root.after_cancel(self.seek_release_timer)
+            self.seek_release_timer = None
+        self.seek_key = None
+        self.seek_step = 15
+
+    def release_seek(self, event):
+        if event.keysym == self.seek_key:
+            # X11 may emit release/press pairs during keyboard auto-repeat.
+            if self.seek_release_timer is not None:
+                self.root.after_cancel(self.seek_release_timer)
+            self.seek_release_timer = self.root.after(80, self.reset_seek)
+
+    def seek_recording(self, key):
+        now = time.monotonic()
+        if self.seek_release_timer is not None:
+            self.root.after_cancel(self.seek_release_timer)
+            self.seek_release_timer = None
+        if self.seek_key != key:
+            self.seek_started = now
+            self.seek_last = float('-inf')
+            self.seek_key = key
+        held = now - self.seek_started
+        self.seek_step = 30 if held >= 2 else 15
+        # Limit commands from fast remote/keyboard repeat to two per second.
+        if now - self.seek_last < .5:
+            return
+        try:
+            self.player.command('seek', self.seek_step * (-1 if key == 'Left' else 1), 'relative')
+            self.seek_last = now
+            self.seek_visible_until = now + 3
+        except RuntimeError as error:
+            self.reset_seek()
+            self.show_error(str(error))
+
+    @staticmethod
+    def recording_time(seconds):
+        seconds = max(0, int(seconds))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f'{hours}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes}:{seconds:02d}'
+
+    def update_recording_progress(self):
+        active = self.watching and self.playing_recording and self.player and not self.menu_open
+        if active and time.monotonic() < self.seek_visible_until:
+            status = self.player.snapshot()
+            position, duration = status.get('time-pos'), status.get('duration')
+            valid = lambda value: isinstance(value, (int, float)) and math.isfinite(value)
+            position = max(0, position) if valid(position) else 0
+            duration = duration if valid(duration) and duration > 0 else None
+            if duration:
+                position = min(position, duration)
+            text = self.recording_time(position) + ' / ' + (self.recording_time(duration) if duration else '—')
+            if self.seek_key:
+                text += f"   {'◀◀' if self.seek_key == 'Left' else '▶▶'} {self.seek_step} sec per stap"
+            elif status.get('pause') is True:
+                text += '   Gepauzeerd'
+            self.recording_position.configure(text=text)
+            self.recording_progress.place(relx=.08, rely=.96, relwidth=.84, anchor='sw')
+            self.recording_progress.lift()
+            width = self.recording_bar.winfo_width()
+            self.recording_bar.delete('all')
+            if duration:
+                self.recording_bar.create_rectangle(0, 0, width * position / duration, 12,
+                                                    fill=AMBER, outline='')
+        else:
+            self.recording_progress.place_forget()
+            if not active:
+                self.reset_seek()
+                self.seek_visible_until = 0
+        self.root.after(250, self.update_recording_progress)
+
     def key(self, event):
         key = event.keysym
         if getattr(self,'recording_zap_target',None):
@@ -1051,7 +1141,7 @@ class TV:
             self.toggle_menu()
             return 'break'
         if getattr(self, 'menu_open', False):
-            if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Right'):
+            if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Left', 'Right'):
                 self.close_menu()
             elif key in ('Up', 'Down'):
                 self.menu_selected = max(0, min(2, self.menu_selected + (-1 if key == 'Up' else 1)))
@@ -1074,7 +1164,7 @@ class TV:
         elif self.watching:
             if getattr(self, 'playing_recording', None):
                 if key in ('Left', 'Right') and self.player:
-                    self.player.command('seek', -30 if key == 'Left' else 30, 'relative')
+                    self.seek_recording(key)
                 elif key in ('Return', 'KP_Enter', 'space') and self.player:
                     self.player.command('cycle', 'pause')
                     self.show_watch_clock()
