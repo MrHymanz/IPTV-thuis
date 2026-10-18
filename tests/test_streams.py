@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.request import urlopen
 from unittest.mock import patch
 
-from mijntv.streams import StreamHub,RecordingConflict
+from mijntv.streams import Feed,StreamHub,RecordingConflict
 from mijntv.store import Store
 from mijntv.recordings import Recordings
 
@@ -38,6 +38,27 @@ class SharedStreamTests(unittest.TestCase):
         self.addCleanup(self.hub.close)
         self.channel={'id':'one','label':'NPO 1'}
         self.source={'id':'primary','url':f'http://127.0.0.1:{self.provider.server_port}/live?password=private'}
+
+    def test_small_network_fragments_do_not_exhaust_consumer_buffers(self):
+        payload = (b'\x47' + b'X'*187)*1600
+        class FragmentedResponse(io.BytesIO):
+            def read1(self, size=-1):
+                return self.read(min(size, 188))
+        feed = Feed(self.channel, self.source)
+        feed.started = True
+        viewer = feed.subscribe()
+        recorder = feed.subscribe()
+        with patch('mijntv.streams.urlopen', return_value=FragmentedResponse(payload)):
+            with self.assertLogs('mijntv.stream', level='INFO') as logs:
+                feed.read()
+        for consumer in (viewer, recorder):
+            chunks = []
+            while not consumer.empty():
+                chunk = consumer.get_nowait()
+                if chunk is not None:
+                    chunks.append(chunk)
+            self.assertEqual(b''.join(chunks), payload)
+        self.assertFalse(any('stream_consumer_slow' in line for line in logs.output))
 
     def test_view_and_record_share_one_upstream_and_home_keeps_recording(self):
         first=self.hub.view(self.channel,self.source)

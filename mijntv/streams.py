@@ -65,7 +65,11 @@ class Feed:
                 try:
                     consumer.put_nowait(chunk)
                 except queue.Full:
-                    logging.getLogger('mijntv.stream').info('stream_consumer_slow source_id=%s',self.source['id'])
+                    with consumer.mutex:
+                        buffered_bytes = sum(len(part) for part in consumer.queue if part is not None)
+                    logging.getLogger('mijntv.stream').info(
+                        'stream_consumer_slow source_id=%s buffered_bytes=%s incoming_chunk_bytes=%s recording=%s',
+                        self.source['id'], buffered_bytes, len(chunk), self.recording)
                     # Disconnect a slow consumer without interrupting the others.
                     self.consumers.discard(consumer)
                     while True:
@@ -113,7 +117,11 @@ class Feed:
                     self.publish(first)
                 reader = response
             while not self.closed:
-                chunk = reader.read1(65536)
+                # read1() may return a single 188-byte TS packet. A queue bounded
+                # by chunk count then holds only milliseconds of video and can
+                # overflow during a harmless burst. Fill bounded 64 KiB blocks
+                # instead, giving each consumer approximately 8 MiB of buffering.
+                chunk = reader.read(65536)
                 if not chunk:
                     break
                 self.publish(chunk)
