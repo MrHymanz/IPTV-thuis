@@ -145,8 +145,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, store.groups())
             elif parts.path == '/api/favorites':
                 self.reply(200, store.favorites())
-            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css'):
-                filename = {'/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
+            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile.css'):
+                filename = {'/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
                 mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'}[Path(filename).suffix]
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:

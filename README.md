@@ -233,3 +233,7 @@ Beeldinstellingen bewaren ook de verversingssnelheid (Hz). Kies bijvoorbeeld 108
 Na het starten van de app wachten automatische EPG-updates, zenderlijstupdates en catalogusonderhoud drie minuten. De bestaande lijst en gids blijven direct bruikbaar. De EPG-controle zoekt alleen de opgeslagen favorieten op; een groepenindex voorkomt volledige tabelscans in webbeheer. De index voor een bestaande catalogus wordt pas na die wachttijd aangelegd en blijft bewaard. Handmatig vernieuwen via beheer blijft direct mogelijk.
 
 De beheerpagina is verdeeld in zes openklapbare onderdelen: IPTV-gegevens, Zenders en favorieten, Beeldinstellingen, Opnames, Opslag en Opnameaccount. Er staat één onderdeel tegelijk open; de browser onthoudt de laatst geopende sectie. Lange zender- en opnamelijsten hebben een eigen scrollvak. Bij het slepen van favorieten scrollt de lijst mee.
+
+### Mobiele frontend-mockup
+
+Open `/mobile` op het beheeradres, bijvoorbeeld `http://192.168.1.40:8090/mobile`, in Safari op je iPhone. Log in met je bestaande beheeraccount. De mobiele mockup heeft een startscherm, doorzoekbare zenders, opnames, een programmagids en een gesimuleerde speler. De inhoud is voorbeelddata; plannen en afspelen wijzigen geen echte opnames. De speler springt 15 seconden per tik en bij langer vasthouden maximaal 30 seconden per stap. De pagina ondersteunt de veilige schermranden van de iPhone en werkt ook op desktop.

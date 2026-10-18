@@ -49,7 +49,7 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css'):
+        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
@@ -63,6 +63,16 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'src="/tv.js"', html)
         self.assertNotIn(b'<script>', html)
         self.assertIn(b'href="/admin"', html)
+
+    def test_mobile_mockup_is_served(self):
+        for path in ('/mobile', '/mobile/', '/mobile.js', '/mobile.css'):
+            status, body = self.request('GET', path)
+            self.assertEqual(status, 200)
+            self.assertTrue(body)
+        html = self.request('GET', '/mobile')[1]
+        self.assertIn(b'viewport-fit=cover', html)
+        self.assertIn(b'src="/mobile.js"', html)
+        self.assertIn(b'href="/mobile.css"', html)
 
     def test_cross_origin_and_missing_header_are_rejected(self):
         data = {'label':'Test', 'url':'https://example.test/secret'}
