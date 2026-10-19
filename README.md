@@ -6,7 +6,7 @@ De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Lin
 
 ## Screenshots
 
-De screenshots tonen de echte interface met voorbeeldzenders, programma's en opnames. De beschikbare logo's komen uit de zenderlijst; bij ontbrekende logo's blijft de zendernaam zichtbaar. Er staan geen provider-inloggegevens of persoonlijke beheerinstellingen in beeld.
+De screenshots tonen de tv-app en het webbeheer. Het scherm Terugkijken toont de native tv-app op 1920×1080 met providerprogrammagegevens; andere beelden bevatten ook voorbeeldprogramma's en opnames. De beschikbare logo's komen uit de zenderlijst; bij ontbrekende logo's blijft de zendernaam zichtbaar. Er staan geen provider-inloggegevens of persoonlijke beheerinstellingen in beeld.
 
 ### Televisie
 
@@ -16,15 +16,15 @@ Grote favorietenknoppen, de huidige en volgende uitzending en de vrije ruimte op
 
 ### Zijmenu
 
-Open met Menu vanuit elke zender. Het zijmenu heeft pictogrammen en een afgeronde, goudgele selectie voor Zenders, Opnames en Terugkijken. Terug sluit het menu en bewaart de geselecteerde zender.
+Open met Menu vanuit elke zender. Het zijmenu heeft pictogrammen en een afgeronde, goudgele selectie voor Zenders, Opnames en Terugkijken. **Links** of **Terug** sluit het menu en bewaart de geselecteerde zender.
 
 ![Tv-zijmenu met pictogrammen en goudgele selectie](docs/screenshots/tv-zijmenu.png)
 
-### Programmagids en opnemen
+### Terugkijken en opnemen
 
-Kies een programma met de pijltjes en druk op OK om de opname te plannen.
+Eerdere, lopende en toekomstige uitzendingen staan in één doorlopende lijst voor de geselecteerde zender. Rechts staan de programmabeschrijving, de voortgang van een lopende uitzending en de actie voor OK.
 
-![Programmagids op de tv met programma's om op te nemen](docs/screenshots/tv-programmagids.png)
+![Terugkijken in de native tv-app op Full HD](docs/screenshots/tv-terugkijken-native.png)
 
 ### Opnames terugkijken
 
@@ -47,7 +47,8 @@ Stel de opnamemap in, plan via de EPG en beheer bewaarde opnames.
 ## Functies
 
 - Maximaal tien grote favorieten per pagina; meer pagina's verschijnen automatisch.
-- EPG met huidige en volgende uitzending, plus een programmagids om opnames te plannen.
+- EPG met huidige en volgende uitzending, plus **Terugkijken** met providerarchief, programmabeschrijvingen en opnameplanning.
+- Eén OK-knop: een afgelopen uitzending terugkijken, het resterende deel van een lopend programma opnemen of een toekomstige opname plannen. Een aparte opnameknop is niet nodig.
 - Tijdens live-tv verschijnt tien minuten voor het volgende EPG-programma rechtsboven een melding met zender, titel en begintijd. De melding verdwijnt na twaalf seconden en verschijnt eenmaal per programma; zonder EPG of tijdens opnames verschijnt ze niet.
 - Opnames terugkijken op de tv; opslaglocatie, planning en bestanden beheren via de webpagina.
 - Vrije ruimte van de ingestelde opnameschijf zichtbaar op het hoofdscherm.
@@ -59,7 +60,7 @@ Stel de opnamemap in, plan via de EPG en beheer bewaarde opnames.
 - Een automatische verversing die meer dan de helft van de bekende favorieten laat verdwijnen wordt geweigerd, ook wanneer de provider nog een grote lijst films en series terugstuurt. De vorige catalogus en streamadressen blijven behouden en de app probeert het na vijftien minuten opnieuw.
 - Eigen namen en volgorde blijven bewaard bij import. Verdwenen zenders blijven als niet beschikbaar zichtbaar en worden bij zappen overgeslagen.
 - Bij ontbrekende programmagids-ID’s bewaart de app bekende favorieten en alternatieve bronnen door zenders binnen dezelfde groep op naam te koppelen. Een gewijzigde kwaliteitsvermelding zoals FHD naar HD mag daarbij verschillen. Dubbelzinnige namen of afwijkende programmagids-ID’s worden niet automatisch gekoppeld; opgeslagen voorkeursbronnen blijven behouden.
-- Standaard uitgebreide M3U-lijsten met `#EXTINF`, HTTP(S), RTSP, RTMP en UDP. Kodi-stijl HTTP-headers na `|` worden doorgegeven aan mpv. DRM, aanbieder-specifieke loginflows, en catch-up zijn niet geïmplementeerd.
+- Standaard uitgebreide M3U-lijsten met `#EXTINF`, HTTP(S), RTSP, RTMP en UDP. Kodi-stijl HTTP-headers na `|` worden doorgegeven aan mpv. Terugkijken ondersteunt het Xtream Codes-providerarchief wanneer het abonnement en de zender dit aanbieden. DRM, andere catch-upformaten en aanbieder-specifieke loginflows worden niet ondersteund.
 
 ## Installatie op de tv-pc
 
@@ -160,6 +161,30 @@ Bij Xtream Codes-inloggegevens haalt de app automatisch de XMLTV-gids van de aan
 
 Via **Programmagids vernieuwen** in het webbeheer kun je direct opnieuw ophalen. Alleen programma’s van de favorieten worden lokaal opgeslagen; koppeling gebeurt op de `tvg-id` uit de playlist, zodat hernoemen blijft werken. Wijzigingen in de favorieten worden automatisch meegenomen. Ontbrekende programmagegevens worden aangegeven zonder het afspelen te blokkeren. Bij een mislukte download blijft de vorige gids bewaard. XMLTV en gecomprimeerde XMLTV worden ondersteund, met een limiet van 512 MB na uitpakken. De app gebruikt de opgeslagen providergegevens; er zijn geen extra inlogvelden nodig.
 
+## Terugkijken op de tv
+
+Markeer een zender in het hoofdscherm en kies **Menu → Terugkijken**. De gids hoort bij die zender en combineert eerdere, lopende en toekomstige uitzendingen in één lijst. Met omhoog/omlaag blader je ook over daggrenzen. Rechts staan de titel, tijden en beschikbare provideromschrijving. Een lopend programma toont een tijdsbalk met de relatieve voortgang en verstreken en resterende minuten. Programma-afbeeldingen worden niet getoond.
+
+| Geselecteerd programma | Actie met OK |
+| --- | --- |
+| Afgelopen en beschikbaar in het providerarchief | Vanaf het begin terugkijken |
+| Afgelopen en niet beschikbaar | Melding dat terugkijken niet beschikbaar is |
+| Loopt nu | Het resterende deel opnemen en automatisch naar de zender schakelen |
+| Begint later | Opname plannen |
+| Heeft al een geplande of lopende opname | Planning annuleren of opname stoppen; het opgenomen deel blijft bewaard |
+
+Er is geen extra keuze voor alleen live kijken en geen opnameknop nodig. Live kijken start vanuit het zenderoverzicht. Geplande en bewaarde opnames vind je via **Menu → Opnames**, met links/rechts tussen **Gepland** en **Opgenomen**. OK annuleert een plan of speelt een beschikbaar bestand af. Bij een lopende opname opent OK een keuze om door te gaan, te stoppen of het al opgenomen deel af te spelen wanneer dat beschikbaar is.
+
+Tijdens archiefweergave en het afspelen van een opname pauzeert OK. Eén druk op links/rechts springt 15 seconden terug/vooruit. Na twee seconden vasthouden worden de sprongen 30 seconden, met maximaal twee sprongen per seconde. De voortgangsbalk verschijnt tijdens spoelen en verdwijnt drie seconden na de laatste sprong. Terug gaat vanuit archiefweergave naar hetzelfde programma in de gids; vanuit een opgeslagen opname ga je terug naar Opnames.
+
+### Beschikbaarheid en opnamevoorrang
+
+De app gebruikt de opgeslagen Xtream Codes-inloggegevens voor het providerarchief en aanvullende programmagegevens. Een alleen geüpload M3U-bestand levert deze API-gegevens niet. Beschikbaarheid en archiefduur verschillen per abonnement en zender. De controle van 19 oktober 2026 vond bij het geteste abonnement 70 Nederlandse bronvarianten met drie dagen archief; dit is geen vaste garantie voor iedere zender of provider. Zie de [providercontrole](docs/catchup-controle.md).
+
+Als de favoriete livebron geen archief aanbiedt, zoekt de app een passende archiefvariant van die zender. De opgeslagen voorkeur voor live kijken blijft behouden. Programmagegevens worden op de achtergrond opgehaald en lokaal bewaard; bij een providerstoring blijven beschikbare opgeslagen gegevens en de lokale EPG bruikbaar. Ontbrekende omschrijvingen blokkeren de bediening niet. De nieuwe gids toont tijden in de Nederlandse tijdzone (`Europe/Amsterdam`).
+
+Bij opnemen via het kijkaccount heeft de opname voorrang. Archiefweergave is geblokkeerd zolang die opname loopt. Begint een geplande opname tijdens archiefweergave, dan stopt eerst de archiefstream zodat de recorder de providerverbinding kan gebruiken. Met een afzonderlijk opnameaccount kan de archiefweergave doorgaan. Een providerarchief is geen lokale opname: alleen zelf opgenomen bestanden blijven na het verlopen van het archief beschikbaar.
+
 ## Importgedrag
 
 Zenderidentiteit wordt afgeleid van `tvg-id`, oorspronkelijke naam, groep en het volgnummer bij exacte duplicaten. Tijdelijke streamtokens tellen niet mee: een vernieuwde URL vervangt de bestaande favoriet. Als de aanbieder naam, groep of ID verandert, voeg je de nieuwe zender opnieuw toe en verwijder je de oude favoriet. Exact gelijk benoemde duplicaten worden op volgorde gekoppeld; onderscheidende namen/IDs zijn betrouwbaarder.
@@ -177,7 +202,7 @@ sh -n tools/install-linux.sh
 python3 tools/build.py
 ```
 
-De optionele videoproef vereist X11 (of Xvfb), tkinter, mpv en ffmpeg; zonder die omgeving wordt alleen die proef overgeslagen. Een afbeelding van het geteste tv-scherm staat in `docs/tv-scherm.png`.
+De native schermtests vereisen X11 (of Xvfb) en tkinter; de videoproeven gebruiken ook mpv en ffmpeg. Zonder die omgeving worden de bijbehorende tests overgeslagen. De gidscontroles testen onder meer Full HD-indeling, stabiele beschrijvingen, navigatie, opnemen via OK en opnamevoorrang. Een afbeelding van het geteste tv-scherm staat in `docs/tv-scherm.png`.
 
 Het bouwscript maakt `dist/IPTV-thuis-0.1.0.zip` met bronbestanden, documentatie, tests en de klikbare mockup. `index.html` is die mockup, geen browser-speler van de echte M3U. Hij ondersteunt ook direct zappen op het voorbeeldscherm.
 
@@ -198,7 +223,7 @@ Het schijficoon op de tv en de browserpreview toont de vrije ruimte van de inges
 
 Kies in het beheer een favoriete zender en open de programmagids. **Opnemen** plant precies de begin- en eindtijd van het EPG-programma. Bij een lopend programma wordt alleen het resterende deel opgenomen; er is geen terugkijkbuffer. **Huidig programma opnemen** gebruikt de eindtijd uit de EPG, of neemt één uur op wanneer programmagegevens ontbreken. Eén opname tegelijk: overlappende plannen worden geweigerd. De pc moet aan blijven. Geplande opnames blijven in SQLite bewaard, starten ook na een herstart wanneer het programma nog loopt, en krijgen een foutstatus wanneer het volledige tijdvak is gemist. Een tijdens herstart actieve opname krijgt de status Onderbroken; het gedeeltelijke bestand blijft bewaard, maar wordt niet automatisch hervat.
 
-Op de tv: druk vanuit elke zender op **Menu** (of F2/O) om het zijmenu te openen. In de zenderlijst opent **links** vanuit de eerste kolom ook het menu. Kies **Zenders**, **Opnames** of **Terugkijken** met omhoog/omlaag en druk OK. De programmagids hoort bij de geselecteerde zender, ook als die op de onderste rij staat. **Links**, **Terug** of opnieuw **Menu** sluit het menu en bewaart je zender en pagina; tijdens afspelen blijft de video doorlopen zolang je alleen het menu opent. In de gids plant OK het geselecteerde programma. In Opnames speelt OK het geselecteerde beschikbare bestand af. Tijdens terugkijken: OK pauzeert, links/rechts springen 15 seconden terug/vooruit en Terug opent de opnamelijst. Houd links/rechts ingedrukt om sneller te spoelen: na 2 seconden worden de sprongen 30 seconden, met maximaal twee sprongen per seconde. Bij loslaten of wisselen van richting begint de versnelling opnieuw. Tijdens spoelen verschijnt onderaan een voortgangsbalk met de huidige positie en totale speelduur; deze verdwijnt 3 seconden na de laatste sprong. Een afstandsbediening met een herkende opnameknop (`XF86Record`) neemt het huidige programma op; R doet hetzelfde. De knoppen zijn ook met de muis aanklikbaar. Via beheer kun je plannen annuleren, lopende opnames stoppen, bestanden downloaden en oude opnames definitief verwijderen.
+Op de tv opent **Menu** (of F2/O) het zijmenu. Vanuit de eerste kolom van de zenderlijst opent **links** dit ook. Kies **Zenders**, **Opnames** of **Terugkijken** met omhoog/omlaag en OK. **Links**, **Terug** of opnieuw **Menu** sluit de zijbalk met behoud van zender en pagina. Tijdens afspelen blijft de video doorlopen zolang je alleen de zijbalk opent. Zie [Terugkijken op de tv](#terugkijken-op-de-tv) voor opnemen en afspelen met de OK-knop. Via beheer kun je plannen annuleren, lopende opnames stoppen, bestanden downloaden en oude opnames definitief verwijderen. Op een toetsenbord blijft R als extra opnamesneltoets beschikbaar.
 
 Zonder apart opnameaccount blijft een opname vast op de gekozen zender. Bij zappen verschijnt **Blijven kijken / Opname stoppen en zappen**, met Blijven kijken als veilige standaard. Het opgenomen deel blijft na stoppen bewaard. Vanuit het homescherm blijft de opname doorlopen; dezelfde zender opnieuw bekijken deelt weer de bestaande verbinding. Als een geplande opname begint terwijl je een andere zender kijkt, schakelt de speler naar de opnamezender en toont een melding. De speler start tijdens een gedeelde opname geen onafhankelijke bronwissel; bij opnameherstel volgen speler en recorder samen de nieuwe bron.
 
@@ -238,10 +263,6 @@ De beheerpagina is verdeeld in zes openklapbare onderdelen: IPTV-gegevens, Zende
 
 Open `/mobile` op het beheeradres, bijvoorbeeld `http://192.168.1.40:8090/mobile`, in Safari op je iPhone. Log in met je bestaande beheeraccount. De mobiele mockup heeft een startscherm, doorzoekbare zenders, opnames, een programmagids en een gesimuleerde speler. De inhoud is voorbeelddata; plannen en afspelen wijzigen geen echte opnames. De speler springt 15 seconden per tik en bij langer vasthouden maximaal 30 seconden per stap. De pagina ondersteunt de veilige schermranden van de iPhone en werkt ook op desktop.
 
-### Catch-up: controle en interactieve mockup
+### Catch-upmockup in de browser
 
-Open `/catchup` op het beheeradres voor het ontwerp van terugkijken binnen de bestaande programmagids. De providercontrole van 19 oktober 2026 vond 70 Nederlandse bronvarianten met 3 dagen archief; NPO 1 HD leverde bij een korte aanvraag ook MPEG-TS-archiefdata. Het ontwerp toont de gecontroleerde bronlijst, voorbeeldprogramma’s en een gesimuleerde speler. De gids is één doorlopende lijst met eerdere, lopende en toekomstige uitzendingen. De zender komt uit de selectie in het hoofdmenu; er is geen aparte zenderkeuze. Omhoog/omlaag bladert, OK kijkt of plant en R neemt het resterende deel van een lopend programma op. Opnames toont Gepland en Opgenomen; plannen, annuleren en overlapdetectie zijn gesimuleerd. Lopende uitzendingen hebben een relatieve voortgangsbalk met verstreken en resterende tijd. De indeling en grotere tekst zijn gecontroleerd op 1920×1080. Zie [controle en ontwerp](docs/catchup-controle.md) voor de bevindingen en grenzen van de controle.
-
-### Terugkijken in de tv-app
-
-De native tv-app toont één doorlopende lijst voor de geselecteerde zender. OK kijkt een afgelopen uitzending terug wanneer het providerarchief dat ondersteunt. Bij een lopende uitzending neemt OK direct het resterende deel op en schakelt naar de zender; een aparte opnameknop is niet nodig. Bij toekomstige uitzendingen plant of annuleert OK de opname. Het informatievak toont beschikbare provideromschrijvingen en de relatieve voortgang van een lopend programma. Een primaire opname heeft voorrang op archiefweergave.
+Open `/catchup` op het beheeradres voor het interactieve browserontwerp. Dit voorbeeld gebruikt de gecontroleerde bronlijst, voorbeeldprogramma’s en een gesimuleerde speler. De gids is één doorlopende lijst voor de vanuit het hoofdmenu geselecteerde zender. Omhoog/omlaag bladert; OK kijkt terug, neemt het resterende deel op of plant een toekomstige opname. Opnames toont Gepland en Opgenomen. Afspelen, plannen, annuleren en overlapdetectie zijn hier gesimuleerd en wijzigen geen echte opnames. De werkende uitvoering staat in de [native tv-app](#terugkijken-op-de-tv).
