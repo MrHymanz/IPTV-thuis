@@ -32,13 +32,13 @@ De screenshots tonen de tv-app en het webbeheer. De tv-beelden zijn opnieuw gema
 
 Grote favorietenknoppen, de huidige en volgende uitzending en de vrije ruimte op de ingestelde opnameschijf.
 
-![Tv-hoofdscherm met favorieten, EPG en vrije opslagruimte](docs/screenshots/tv-home.png)
+![Tv-hoofdscherm met favorieten, EPG en vrije opslagruimte](docs/screenshots/tv-home-met-zenderlogos.png)
 
 ### Zijmenu
 
 Open met Menu vanuit elke zender. Het zijmenu heeft pictogrammen en een afgeronde, goudgele selectie voor Zenders, Opnames en Terugkijken. **Links** of **Terug** sluit het menu en bewaart de geselecteerde zender.
 
-![Tv-zijmenu met pictogrammen en goudgele selectie](docs/screenshots/tv-zijmenu.png)
+![Tv-zijmenu met pictogrammen en goudgele selectie](docs/screenshots/tv-zijmenu-met-zenderlogos.png)
 
 ### Terugkijken en opnemen
 
@@ -58,7 +58,7 @@ Met links/rechts wissel je tussen **Gepland** en **Opgenomen**. OK annuleert een
 
 Zoek zenders, pas namen aan en sleep favorieten naar de gewenste volgorde.
 
-![Webbeheer met zenderzoeker en versleepbare favorieten](docs/screenshots/beheer-zenders.png)
+![Webbeheer met zenderzoeker en versleepbare favorieten](docs/screenshots/beheer-zenders-met-zenderlogos.png)
 
 ### Opnames beheren
 
