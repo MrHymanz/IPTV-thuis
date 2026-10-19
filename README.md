@@ -26,7 +26,7 @@ De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Lin
 
 ## Screenshots
 
-De screenshots tonen de tv-app en het webbeheer. De tv-beelden zijn opnieuw gemaakt met de huidige native app op 1920×1080; de beheerbeelden tonen de huidige webinterface. Zenders, programma's en opnames zijn voorbeeldgegevens. De beschikbare logo's komen uit de zenderlijst; bij ontbrekende logo's blijft de zendernaam zichtbaar. Er staan geen provider-inloggegevens of persoonlijke beheerinstellingen in beeld.
+De screenshots tonen de tv-app en het webbeheer. De tv-beelden zijn opnieuw gemaakt met de huidige native app op 1920×1080; de beheerbeelden tonen de huidige webinterface. De programma’s en opnames zijn voorbeeldgegevens. Het hoofdscherm, zijmenu en webbeheer tonen echte zenderlogo’s uit de appcache; bij ontbrekende logo's blijft de zendernaam zichtbaar. Er staan geen provider-inloggegevens of persoonlijke beheerinstellingen in beeld.
 
 ### Televisie
 
