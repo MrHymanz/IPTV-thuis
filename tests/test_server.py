@@ -49,7 +49,7 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css'):
+        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
@@ -73,6 +73,23 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'viewport-fit=cover', html)
         self.assertIn(b'src="/mobile.js"', html)
         self.assertIn(b'href="/mobile.css"', html)
+
+    def test_catchup_mockup_is_served(self):
+        for path in ('/catchup', '/catchup/', '/catchup.js', '/catchup.css', '/catchup-data.js'):
+            status, body = self.request('GET', path)
+            self.assertEqual(status, 200)
+            self.assertTrue(body)
+        html = self.request('GET', '/catchup')[1]
+        self.assertIn(b'src="/catchup-data.js"', html)
+        self.assertIn(b'src="/catchup.js"', html)
+        self.assertIn(b'id="guide-panel"', html)
+        self.assertIn(b'id="recordings-dialog"', html)
+        self.assertIn(b'id="programmes"', html)
+        self.assertNotIn(b'id="channel"', html)
+        self.assertNotIn(b'id="watch"', html)
+        self.assertNotIn(b'role="tablist"', html)
+        self.assertNotIn(b'id="source-overview"', html)
+        self.assertIn(b'id="live-progress"', html)
 
     def test_cross_origin_and_missing_header_are_rejected(self):
         data = {'label':'Test', 'url':'https://example.test/secret'}

@@ -44,7 +44,7 @@ class MenuTests(unittest.TestCase):
         card = Mock()
         card.winfo_width.return_value = 500
         card.winfo_height.return_value = 115
-        for index, title in enumerate(('Zenders', 'Opnames', 'Programmagids /\nopnemen')):
+        for index, title in enumerate(('Zenders', 'Opnames', 'Terugkijken')):
             card.reset_mock()
             self.tv.menu_color = '#0e1e32'
             self.tv.menu_selected = index

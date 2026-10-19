@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 
 from .video_health import black_frame
 from .audio import audio_device
@@ -18,9 +19,12 @@ class Player:
         if hwdec not in ('auto-safe', 'no'):
             raise ValueError('Ongeldige decoderkeuze.')
         self.events = queue.Queue()
+        self.ended = threading.Event()
+        self.ended.set()
         self.lock = threading.Lock()
         self.status_lock = threading.Lock()
         self.status = {}
+        self.stop_waiters = {}
         self.watchdog = StreamWatchdog()
         self.watchdog_enabled = True
         self.last_warning = 0
@@ -70,6 +74,11 @@ class Player:
                     try:
                         message = json.loads(line)
                         request = message.get('request_id', '')
+                        if isinstance(request, str) and request.startswith('stop:'):
+                            with self.status_lock:
+                                waiter = self.stop_waiters.get(request)
+                                if waiter and message.get('error') == 'success':
+                                    waiter.set()
                         if isinstance(request, str) and request.startswith('health:'):
                             key = request.split(':', 1)[1]
                             if key in PROPERTIES:
@@ -86,6 +95,8 @@ class Player:
                             if now-self.last_warning >= 5:
                                 self.last_warning = now
                                 self.events.put({'event': 'diagnostic-error', 'category': category})
+                        if message.get('event') in ('end-file', 'shutdown'):
+                            self.ended.set()
                         if message.get('event') in ('file-loaded', 'end-file', 'shutdown'):
                             # Do not forward error text or metadata containing provider URLs.
                             self.events.put({'event': message['event'], 'reason': message.get('reason', '')})
@@ -95,12 +106,15 @@ class Player:
             pass
         self.events.put({'event': 'disconnected'})
 
-    def command(self, *args):
+    def command(self, *args, request_id=None):
         with self.lock:
             if not self.connection or self.process.poll() is not None:
                 raise RuntimeError('De videospeler is gestopt. Kies opnieuw een zender.')
             try:
-                self.connection.sendall((json.dumps({'command': list(args)}) + '\n').encode())
+                message = {'command': list(args)}
+                if request_id is not None:
+                    message['request_id'] = request_id
+                self.connection.sendall((json.dumps(message) + '\n').encode())
             except OSError:
                 raise RuntimeError('De videospeler reageert niet. Kies opnieuw een zender.') from None
 
@@ -177,6 +191,7 @@ class Player:
                 self.check_picture()
 
     def play(self, url):
+        self.ended.clear()
         with self.status_lock:
             self.generation += 1
             self.status.clear()
@@ -192,11 +207,30 @@ class Player:
         self.command('loadfile', address, 'replace')
         self.command('set_property', 'pause', False)
 
-    def stop(self):
+    def stop(self, request_id=None):
         with self.status_lock:
             self.generation += 1
             self.monitor_active = False
-        self.command('stop')
+        if request_id is None:
+            self.command('stop')
+        else:
+            self.command('stop', request_id=request_id)
+
+    def stop_and_wait(self):
+        if not self.connection or self.process.poll() is not None:
+            return
+        identifier, waiter = 'stop:'+uuid.uuid4().hex, threading.Event()
+        with self.status_lock:
+            self.stop_waiters[identifier] = waiter
+        try:
+            self.stop(identifier)
+            if not waiter.wait(2):
+                self.close()
+        except RuntimeError:
+            self.close()
+        finally:
+            with self.status_lock:
+                self.stop_waiters.pop(identifier, None)
 
     def close(self):
         self.monitor_stop.set()

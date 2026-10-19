@@ -14,6 +14,7 @@ import uuid
 from urllib.parse import parse_qsl, parse_qs, urlsplit
 from .store import fetch_playlist, iter_m3u, Store
 from .maintenance import BACKGROUND_STARTUP_DELAY
+from .catchup import Catchup
 from .epg import PROGRAMME_VISIBLE
 
 MIN_FREE = 512 * 1024 * 1024
@@ -25,6 +26,7 @@ STATES = {'queued': 'Gepland', 'recording': 'Neemt op', 'completed': 'Opgenomen'
 class Recordings:
     def __init__(self, store, streams=None):
         self.store = store
+        self.catchup = Catchup(store)
         self.streams = streams
         self.input_refreshing = False
         self.retry_recording = None
@@ -33,6 +35,7 @@ class Recordings:
         self.lock = threading.RLock()
         self.process = None
         self.active = None
+        self.archive_stop = None
         self.manifest = None
         self.stopping = None
         if not store.setting('recording_directory'):
@@ -154,6 +157,17 @@ class Recordings:
         if urlsplit(source['url'].partition('|')[0]).scheme not in ('http','https'):
             return source['url']
         return self.streams.view(channel,source) if self.streams else source['url']
+
+    def reserve_archive(self, stop):
+        with self.lock:
+            if isinstance(self.required_channel(), dict) or (self.active and not self.store.setting('recording_source')):
+                raise ValueError('Er loopt een opname op dit account. Terugkijken is daarna weer beschikbaar.')
+            self.stop_view()
+            self.archive_stop = stop
+
+    def release_archive(self):
+        with self.lock:
+            self.archive_stop = None
 
     def stop_view(self):
         if self.streams:
@@ -316,7 +330,7 @@ class Recordings:
                 else:
                     if isinstance(programme_start, bool) or not isinstance(programme_start, int):
                         raise ValueError('Ongeldig programma.')
-                    programme = db.execute(f'''SELECT start,end,title FROM epg_programmes p
+                    programme = self.catchup.recording_programme(channel_id, programme_start) or db.execute(f'''SELECT start,end,title FROM epg_programmes p
                         WHERE epg_id=? AND start=? AND end>? AND {PROGRAMME_VISIBLE}''',
                         (channel['epg_id'].strip(), programme_start, now)).fetchone()
                     if not programme:
@@ -418,6 +432,9 @@ class Recordings:
                 raise ValueError('Zender niet meer beschikbaar.')
             slot, source = self.recording_source(channel)
             source=self.retry_sources.pop(row['id'],source)
+            if slot == 'primary' and self.archive_stop:
+                stop, self.archive_stop = self.archive_stop, None
+                stop()
             address, _, raw_headers = source['url'].partition('|')
             if self.streams:
                 feed = self.streams.acquire(slot,channel,source,recording=True)

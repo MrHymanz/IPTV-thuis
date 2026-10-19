@@ -15,6 +15,7 @@ import tkinter as tk
 from .player import Player
 from .logos import LogoCache
 from .display import Display
+from .catchup import phase
 
 BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ffda83'
 
@@ -34,7 +35,15 @@ class TV:
         self.epg_notice_until = 0
         self.menu_selected = 0
         self.playing_recording = None
+        self.playing_catchup = None
+        self.guide_generation = 0
+        self.guide_return = None
+        self.recording_filter = 'saved'
+        self.programme_actions = None
+        self.programme_action_selected = 0
         self.seek_key = None
+        self.action_keys = set()
+        self.action_releases = {}
         self.seek_release_timer = None
         self.seek_visible_until = 0
         self.seek_started = self.seek_last = 0
@@ -123,7 +132,7 @@ class TV:
         self.page_label.pack(side='left', padx=20)
         self.next = self.small_button(paging, 'Volgende →', lambda: self.change_page(1))
         self.next.pack(side='left', padx=20)
-        self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Menu: opnames / programmagids', 17, color=MUTED).pack(pady=(0, 25))
+        self.label(self.home, 'Pijltjes: kiezen    •    OK: kijken    •    Menu: opnames / terugkijken', 17, color=MUTED).pack(pady=(0, 25))
         self.setup = self.label(self.home, '', 20, color=AMBER)
         self.banner = tk.Frame(self.content, bg=BG)
         banner_text = tk.Frame(self.banner, bg=BG)
@@ -140,6 +149,13 @@ class TV:
         self.panel_title.pack(anchor='w', padx=60, pady=(30, 10))
         self.panel_hint = self.label(self.panel, '', 17, color=MUTED)
         self.panel_hint.pack(anchor='w', padx=60, pady=(0, 15))
+        self.panel_tabs = tk.Frame(self.panel, bg=BG)
+        self.panel_tabs.pack(fill='x', padx=60, pady=(0, 12))
+        self.recording_tabs = []
+        for value, title in (('planned', 'Gepland'), ('saved', 'Opgenomen')):
+            button = self.small_button(self.panel_tabs, title, lambda value=value: self.select_recording_tab(value))
+            button.pack(side='left', padx=(0, 14))
+            self.recording_tabs.append((value, button))
         self.panel_rows = tk.Frame(self.panel, bg=BG)
         self.panel_rows.pack(fill='both', expand=True, padx=60)
         self.small_button(self.panel, '← Terug naar zenders', self.go_home).pack(pady=20)
@@ -171,10 +187,20 @@ class TV:
         self.recording_bar = tk.Canvas(self.recording_progress, height=12, bg=TILE,
                                        highlightthickness=0)
         self.recording_bar.pack(fill='x', pady=(8, 0))
+        from .guide import GuideView
+        self.guide_view = GuideView(self.content, self)
+        self.programme_dialog = tk.Frame(self.content, bg=TILE, highlightthickness=2,
+                                            highlightbackground=AMBER, padx=30, pady=25)
+        self.programme_dialog_title = self.label(self.programme_dialog, '', 24, bold=True)
+        self.programme_dialog_title.configure(bg=TILE, wraplength=int(650*self.scale))
+        self.programme_dialog_title.pack(anchor='w', pady=(0, 18))
+        self.programme_dialog_rows = tk.Frame(self.programme_dialog, bg=TILE)
+        self.programme_dialog_rows.pack(fill='x')
+        self.label(self.programme_dialog, '↑ ↓ Kiezen    OK Bevestigen    Terug Sluiten', 14, color=MUTED).pack(anchor='w', pady=(18, 0))
         self.build_menu()
         self.root.bind('<Key>', self.key)
         self.root.bind('<KeyRelease>', self.release_seek)
-        self.root.bind('<FocusOut>', lambda event: self.reset_seek())
+        self.root.bind('<FocusOut>', lambda event: self.reset_inputs())
         self.root.after(250, self.update_recording_progress)
         self.root.bind('<F11>', self.toggle_fullscreen)
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
@@ -316,9 +342,11 @@ class TV:
             self.render()
         if self.watching and not self.playing_recording:
             self.update_programme()
+        if self.panel_mode == 'guide':
+            self.refresh_guide_state()
         if self.panel_mode == 'recordings':
             old_recording = self.panel_items[self.panel_selected]['id'] if self.panel_items else None
-            self.panel_items = self.recordings.list()
+            self.panel_items = self.recording_items()
             self.panel_selected = next((i for i, item in enumerate(self.panel_items) if item['id'] == old_recording),
                                        min(self.panel_selected, max(0, len(self.panel_items)-1)))
             self.render_panel()
@@ -468,7 +496,7 @@ class TV:
                     card.create_rectangle(cx+col*scale-1.5*scale, cy+row*scale-1.5*scale,
                                           cx+col*scale+1.5*scale, cy+row*scale+1.5*scale,
                                           outline='', fill=color)
-        title = ('Zenders', 'Opnames', 'Programmagids /\nopnemen')[index]
+        title = ('Zenders', 'Opnames', 'Terugkijken')[index]
         card.create_text(80*scale, cy, text=title, anchor='w', justify='left',
                          fill=WHITE, font=('DejaVu Sans', int(23*scale)),
                          width=max(40, width-100*scale))
@@ -513,7 +541,7 @@ class TV:
             self.draw_menu_card(button, index)
         channel = self.channels[self.selected]['label'] if self.channels else 'Geen zender geselecteerd'
         self.menu_hint.configure(text='Voor de geselecteerde zender:\n' + channel
-                                 if self.menu_selected == 2 else 'Opnames en programmagids\nvanuit elke zender bereikbaar.',
+                                 if self.menu_selected == 2 else 'Opnames en terugkijken\nvanuit elke zender bereikbaar.',
                                  wraplength=int(290*self.scale))
 
     def menu_choose(self, index=None):
@@ -535,6 +563,29 @@ class TV:
         except (ValueError, OSError) as error:
             self.show_error(str(error) if isinstance(error, ValueError) else 'Opslag niet bereikbaar.')
 
+    def recording_items(self):
+        rows = self.recordings.list()
+        if self.recording_filter == 'planned':
+            return sorted((row for row in rows if row['state'] in ('queued', 'recording')), key=lambda row: row['start'])
+        return [row for row in rows if row['state'] not in ('queued', 'recording') and
+                (row['state'] != 'cancelled' or row['playable'])]
+
+    def select_recording_tab(self, value):
+        self.recording_filter = value
+        self.panel_items, self.panel_selected = self.recording_items(), 0
+        self.render_panel()
+
+    def guide_plans(self):
+        return [row for row in self.recordings.list() if row['channel_id'] == self.panel_channel and row['state'] in ('queued', 'recording')]
+
+    def refresh_guide_state(self):
+        now = time.time()
+        for item in self.panel_items:
+            days = item.get('archive_days', 0)
+            item['archive'] = bool(days and item['end'] <= now and item['start'] >= now-days*86400)
+        self.guide_view.plans = self.guide_plans()
+        self.guide_view.highlight()
+
     def open_panel(self, mode):
         if not self.recordings:
             return
@@ -543,28 +594,177 @@ class TV:
             return
         self.go_home()
         self.panel_mode, self.panel_selected = mode, 0
-        try:
-            if mode == 'guide':
-                if not self.channels:
-                    return
-                self.panel_channel = self.channels[self.selected]['id']
-                guide = self.recordings.guide(self.panel_channel)
-                self.panel_items = guide['programmes']
-                heading = 'Programmagids · ' + guide['channel']
-                hint = 'Pijltjes: programma kiezen · OK: opname plannen · Terug: zenders'
-            else:
-                self.panel_items = self.recordings.list()
-                heading = 'Mijn opnames'
-                hint = 'Pijltjes: kiezen · OK: afspelen · Terug: zenders. Beheer opnames via de beheerpagina.'
-            self.panel_title.configure(text=heading)
-            self.panel_hint.configure(text=hint)
+        if mode == 'guide':
+            self.panel_channel = self.channels[self.selected]['id']
+            self.panel_items = self.recordings.catchup.local_guide(self.channels[self.selected])
+            self.show_guide_items(self.panel_items, 'Programmagegevens worden opgehaald…')
+            self.guide_view.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self.guide_view.lift()
+            generation = self.guide_generation
+            channel_id = self.panel_channel
+            future = Future()
+            def fetch():
+                try:
+                    future.set_result(self.recordings.catchup.guide(channel_id))
+                except Exception as error:
+                    future.set_exception(error)
+            threading.Thread(target=fetch, daemon=True).start()
+            self.root.after(100, lambda: self.poll_guide(future, generation))
+        else:
+            rows = self.recordings.list()
+            self.recording_filter = 'saved' if any(row['playable'] for row in rows) else 'planned' if any(row['state'] in ('queued', 'recording') for row in rows) else 'saved'
+            self.panel_items = self.recording_items()
+            self.panel_title.configure(text='Mijn opnames')
+            self.panel_hint.configure(text='↑ ↓ Kiezen · ← → Gepland / Opgenomen · OK: afspelen / geplande opname annuleren')
             self.panel.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.panel.lift()
             self.render_panel()
+
+    def show_guide_items(self, items, notice=''):
+        self.panel_items = items
+        previous = self.guide_return
+        index = next((i for i, item in enumerate(items) if previous == (self.panel_channel, item['start'])), None)
+        if index is None:
+            index = next((i for i, item in enumerate(items) if item['end'] > time.time()), max(0, len(items)-1))
+        self.panel_selected = index
+        self.guide_view.set_items(items, index, self.guide_plans(), notice)
+
+    def poll_guide(self, future, generation):
+        if generation != self.guide_generation or self.panel_mode != 'guide':
+            return
+        if not future.done():
+            self.root.after(100, lambda: self.poll_guide(future, generation))
+            return
+        # Preserve a row the viewer selected while the background request was loading.
+        if self.panel_items:
+            self.guide_return = (self.panel_channel, self.panel_items[self.panel_selected]['start'])
+        try:
+            result = future.result()
+            self.show_guide_items(result['programmes'], result['notice'])
+        except Exception:
+            self.show_guide_items(self.panel_items, 'De provider is niet bereikbaar. De bestaande gids blijft beschikbaar.')
+
+    def show_programme_actions(self, title, choices):
+        self.programme_actions, self.programme_action_selected = choices, 0
+        self.programme_dialog_title.configure(text=title)
+        for widget in self.programme_dialog_rows.winfo_children():
+            widget.destroy()
+        for index, (label, callback) in enumerate(choices):
+            button = self.small_button(self.programme_dialog_rows, label,
+                                       lambda index=index: self.confirm_programme_action(index))
+            button.configure(anchor='w', width=30)
+            button.pack(fill='x', pady=5)
+        self.render_programme_actions()
+
+    def render_programme_actions(self):
+        for index, button in enumerate(self.programme_dialog_rows.winfo_children()):
+            button.configure(bg=AMBER if index == self.programme_action_selected else '#304453',
+                             fg=BG if index == self.programme_action_selected else WHITE)
+        self.programme_dialog.place(relx=.5, rely=.5, anchor='center')
+        self.programme_dialog.lift()
+
+    def close_programme_actions(self):
+        self.programme_actions = None
+        if hasattr(self, 'programme_dialog'):
+            self.programme_dialog.place_forget()
+
+    def confirm_programme_action(self, index=None):
+        if not self.programme_actions:
+            return
+        callback = self.programme_actions[self.programme_action_selected if index is None else index][1]
+        self.close_programme_actions()
+        try:
+            callback()
+        except (ValueError, OSError) as error:
+            self.show_error(str(error) if isinstance(error, ValueError) else 'Opname of uitzending niet bereikbaar.')
+            self.root.after(4000, self.error.place_forget)
+
+    def watch_guide_live(self):
+        item = self.panel_items[self.panel_selected]
+        self.guide_return = (self.panel_channel, item['start'])
+        index = next((i for i, channel in enumerate(self.channels) if channel['id'] == self.panel_channel), None)
+        if index is None:
+            raise ValueError('Deze zender staat niet meer in je favorieten.')
+        self.go_home()
+        self.choose(index)
+
+    def cancel_panel_recording(self, item):
+        self.recordings.cancel(item['id'])
+        self.panel_items = self.recording_items()
+        self.panel_selected = min(self.panel_selected, max(0, len(self.panel_items)-1))
+        self.render_panel()
+
+    def play_recorded_item(self, item):
+        path = self.recordings.playback(item['id'])
+        self.panel.place_forget()
+        self.panel_mode = None
+        self.home.place_forget()
+        self.watching = True
+        self.playing_recording = item['id']
+        self.banner_label.configure(text=item['title'])
+        self.banner_programme.configure(text='OK: pauze · Links/rechts: spoelen · Vasthouden: sneller · Terug: opnames')
+        self.show_banner(60)
+        self.start_stream({'url': str(path)})
+
+    def toggle_guide_recording(self):
+        if not self.panel_items:
+            return
+        item = self.panel_items[self.panel_selected]
+        if phase(item) == 'past':
+            self.show_error('Afgelopen uitzendingen kun je terugkijken als ze nog in het providerarchief staan.')
+        else:
+            planned = self.guide_view.plan(item)
+            try:
+                if planned and planned['state'] == 'queued':
+                    self.recordings.cancel(planned['id'])
+                    message = 'Geplande opname geannuleerd.'
+                elif planned:
+                    self.recordings.cancel(planned['id'])
+                    message = 'Opname wordt gestopt. Het opgenomen deel blijft bewaard.'
+                else:
+                    self.recordings.schedule(self.panel_channel, item['start'])
+                    if phase(item) == 'current':
+                        self.watch_guide_live()
+                        message = 'Het resterende deel wordt opgenomen.'
+                    else:
+                        message = 'Opname gepland. Je vindt hem onder Opnames → Gepland.'
+                self.refresh_guide_state()
+                self.show_error(message)
+            except (ValueError, OSError) as error:
+                self.show_error(str(error) if isinstance(error, ValueError) else 'Opslag niet bereikbaar.')
+        self.root.after(3500, self.error.place_forget)
+
+    def play_catchup(self, item):
+        try:
+            # Metadata checks do not open a stream. The recorder guard is checked again
+            # under its lock immediately before mpv opens the archive connection.
+            if isinstance(self.recordings.required_channel(), dict):
+                raise ValueError('Er loopt een opname op dit account. Terugkijken is daarna weer beschikbaar.')
+            url = self.recordings.catchup.playback_url(self.panel_channel, item['start'])
+            self.guide_return = (self.panel_channel, item['start'])
+            self.playing_catchup = dict(item)
+            self.playing_recording = 'catchup'
+            self.watching = True
+            self.panel_mode = None
+            self.guide_generation += 1
+            self.guide_view.place_forget()
+            self.home.place_forget()
+            self.banner_label.configure(text='Terugkijken · '+item['title'])
+            self.banner_programme.configure(text='OK: pauze · Links/rechts: spoelen · Terug: terugkijkgids')
+            self.show_banner(60)
+            self.start_stream({'url': url})
         except ValueError as error:
             self.show_error(str(error))
+            self.root.after(4000, self.error.place_forget)
 
     def render_panel(self):
+        if self.panel_mode == 'guide':
+            self.guide_view.selected = self.panel_selected
+            self.guide_view.highlight()
+            self.guide_view.reveal()
+            return
+        for value, button in self.recording_tabs:
+            button.configure(fg=AMBER if value == self.recording_filter else MUTED, bg='#304453' if value == self.recording_filter else TILE)
         for widget in self.panel_rows.winfo_children():
             widget.destroy()
         if not self.panel_items:
@@ -589,20 +789,25 @@ class TV:
         item = self.panel_items[self.panel_selected]
         try:
             if self.panel_mode == 'guide':
-                self.recordings.schedule(self.panel_channel, item['start'])
-                self.show_error('Opname ingepland. Bekijk de status bij Opnames.')
-                self.root.after(3000, self.error.place_forget)
+                if phase(item) == 'past':
+                    self.play_catchup(item)
+                elif phase(item) == 'current':
+                    self.toggle_guide_recording()
+                else:
+                    self.toggle_guide_recording()
+            elif item['state'] == 'queued':
+                self.recordings.cancel(item['id'])
+                self.panel_items = self.recording_items()
+                self.panel_selected = min(self.panel_selected, max(0, len(self.panel_items)-1))
+                self.render_panel()
+            elif item['state'] == 'recording':
+                choices = [('Verder opnemen', lambda: None),
+                           ('Opname stoppen', lambda: self.cancel_panel_recording(item))]
+                if item['playable']:
+                    choices.append(('Opgenomen deel afspelen', lambda: self.play_recorded_item(item)))
+                self.show_programme_actions(item['title'], choices)
             elif item['playable']:
-                path = self.recordings.playback(item['id'])
-                self.panel.place_forget()
-                self.panel_mode = None
-                self.home.place_forget()
-                self.watching = True
-                self.playing_recording = item['id']
-                self.banner_label.configure(text=item['title'])
-                self.banner_programme.configure(text='OK: pauze · Links/rechts: spoelen · Vasthouden: sneller · Terug: opnames')
-                self.show_banner(60)
-                self.start_stream({'url': str(path)})
+                self.play_recorded_item(item)
             else:
                 self.show_error(item['error'] or 'Deze opname is nog niet beschikbaar om af te spelen.')
         except (ValueError, OSError) as error:
@@ -642,6 +847,7 @@ class TV:
         self.selected, self.page = index, index//10
         self.watching = True
         self.playing_recording = None
+        self.playing_catchup = None
         self.error.place_forget()
         self.home.place_forget()
         self.banner.lift()
@@ -696,7 +902,12 @@ class TV:
                     self.active_source_id=source_id
                     self.tried_sources.add(source_id)
                 self.playing_stream_token=self.recordings.viewing_token()
-            self.player.play(url)
+            if getattr(self, 'playing_catchup', None):
+                with self.recordings.lock:
+                    self.recordings.reserve_archive(self.player.stop_and_wait)
+                    self.player.play(url)
+            else:
+                self.player.play(url)
             self.root.focus_force()
             self.loading_started = time.monotonic()
             self.loading = True
@@ -723,6 +934,17 @@ class TV:
         self.choose(available[i])
 
     def go_home(self):
+        self.close_programme_actions()
+        if getattr(self, 'playing_catchup', None) and self.player:
+            try:
+                self.player.stop_and_wait()
+            except RuntimeError:
+                pass
+        self.playing_catchup = None
+        self.guide_generation += 1
+        self.guide_view.place_forget()
+        if self.recordings:
+            self.recordings.release_archive()
         self.reset_seek()
         self.seek_visible_until = 0
         self.recording_progress.place_forget()
@@ -915,6 +1137,10 @@ class TV:
                 self.choose(index)
                 self.show_error('Geplande opname gestart. Kijken en opnemen delen nu deze zender.')
                 self.root.after(5000,self.error.place_forget)
+        if (getattr(self, 'playing_catchup', None) and self.watching and self.recordings.archive_stop is None and not self.pending_zap):
+            self.open_panel('guide')
+            self.show_error('Terugkijken gestopt: een geplande opname is gestart.')
+            self.root.after(5000, self.error.place_forget)
         if self.recovery_pending and self.watching and time.monotonic()-self.recovery_attempts[-1] >= 60:
             reason, snapshot = self.recovery_pending
             self.recovery_pending = None
@@ -945,14 +1171,20 @@ class TV:
                     self.loading = False
                     self.root.focus_force()
                     self.error.place_forget()
-                    if self.playing_recording:
+                    if getattr(self, 'playing_catchup', None):
+                        self.banner_label.configure(text='Terugkijken · '+self.playing_catchup['title'])
+                    elif self.playing_recording:
                         self.banner_label.configure(text='Opname afspelen — Terug: opnames')
                     elif self.channels:
                         self.banner_label.configure(text=f'{self.selected+1} · {self.channels[self.selected]["label"]}   —   Pijltjes: zappen')
                     self.show_banner()
                 elif (event['event']=='end-file' and event.get('reason') in ('error','eof')) or event['event']=='disconnected':
                     self.loading = False
-                    if self.playing_recording:
+                    if getattr(self, 'playing_catchup', None):
+                        self.open_panel('guide')
+                        if event.get('reason') == 'error':
+                            self.show_error('Deze uitzending kon niet worden afgespeeld. Probeer een andere uitzending.')
+                    elif self.playing_recording:
                         self.open_panel('recordings')
                         continue
                     self.recover_stream(event.get('reason') or 'disconnected', self.player.snapshot())
@@ -1052,7 +1284,22 @@ class TV:
         self.seek_key = None
         self.seek_step = 15
 
+    def reset_inputs(self):
+        self.reset_seek()
+        for timer in self.action_releases.values():
+            self.root.after_cancel(timer)
+        self.action_releases.clear()
+        self.action_keys.clear()
+
     def release_seek(self, event):
+        if event.keysym in getattr(self, 'action_keys', set()):
+            previous = self.action_releases.pop(event.keysym, None)
+            if previous is not None:
+                self.root.after_cancel(previous)
+            def release():
+                self.action_releases.pop(event.keysym, None)
+                self.action_keys.discard(event.keysym)
+            self.action_releases[event.keysym] = self.root.after(80, release)
         if event.keysym == self.seek_key:
             # X11 may emit release/press pairs during keyboard auto-repeat.
             if self.seek_release_timer is not None:
@@ -1120,6 +1367,23 @@ class TV:
 
     def key(self, event):
         key = event.keysym
+        if hasattr(event, 'keycode') and key in ('Return', 'KP_Enter', 'space', 'r', 'R', 'XF86Record'):
+            timer = self.action_releases.pop(key, None)
+            if timer is not None:
+                self.root.after_cancel(timer)
+            if key in self.action_keys:
+                return 'break'
+            self.action_keys.add(key)
+        if getattr(self, 'programme_actions', None):
+            if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Left'):
+                self.close_programme_actions()
+            elif key in ('Up', 'Down'):
+                self.programme_action_selected = max(0, min(len(self.programme_actions)-1,
+                                                           self.programme_action_selected+(-1 if key == 'Up' else 1)))
+                self.render_programme_actions()
+            elif key in ('Return', 'KP_Enter', 'space'):
+                self.confirm_programme_action()
+            return 'break'
         if getattr(self,'recording_zap_target',None):
             if self.recording_zap_stopping:
                 return 'break'
@@ -1135,7 +1399,18 @@ class TV:
             self.change_volume({'XF86AudioRaiseVolume':5, 'XF86AudioLowerVolume':-5}.get(key))
             return 'break'
         if key in ('XF86Record', 'r', 'R'):
-            self.record_current()
+            if self.panel_mode == 'guide':
+                self.toggle_guide_recording()
+            elif self.panel_mode == 'recordings' and self.panel_items and self.panel_items[self.panel_selected]['state'] in ('queued', 'recording'):
+                try:
+                    self.recordings.cancel(self.panel_items[self.panel_selected]['id'])
+                    self.panel_items = self.recording_items()
+                    self.panel_selected = min(self.panel_selected, max(0, len(self.panel_items)-1))
+                    self.render_panel()
+                except (ValueError, OSError) as error:
+                    self.show_error(str(error) if isinstance(error, ValueError) else 'Opname niet bereikbaar.')
+            else:
+                self.record_current()
             return 'break'
         if key in ('Menu', 'XF86MenuKB', 'F2', 'o', 'O'):
             self.toggle_menu()
@@ -1149,6 +1424,9 @@ class TV:
             elif key in ('Return', 'KP_Enter', 'space'):
                 self.menu_choose()
             return 'break'
+        if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_catchup', None):
+            self.open_panel('guide')
+            return 'break'
         if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_recording', None):
             self.open_panel('recordings')
             return 'break'
@@ -1157,10 +1435,15 @@ class TV:
         elif getattr(self, 'panel_mode', None):
             if key in ('Return', 'KP_Enter', 'space'):
                 self.panel_choose()
+            elif self.panel_mode == 'recordings' and key in ('Left', 'Right'):
+                self.select_recording_tab('planned' if key == 'Left' else 'saved')
             elif key in ('Up', 'Down', 'Prior', 'Next'):
                 delta = {'Up':-1, 'Down':1, 'Prior':-6, 'Next':6}[key]
-                self.panel_selected = max(0, min(len(self.panel_items)-1, self.panel_selected+delta))
-                self.render_panel()
+                if self.panel_mode == 'guide':
+                    self.guide_view.move(delta)
+                else:
+                    self.panel_selected = max(0, min(len(self.panel_items)-1, self.panel_selected+delta))
+                    self.render_panel()
         elif self.watching:
             if getattr(self, 'playing_recording', None):
                 if key in ('Left', 'Right') and self.player:
