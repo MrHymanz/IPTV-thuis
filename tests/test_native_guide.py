@@ -127,6 +127,48 @@ class NativeGuideTests(unittest.TestCase):
         self.assertLessEqual(view.action.winfo_rooty() + view.action.winfo_height(),
                              view.info.winfo_rooty() + view.info.winfo_height())
 
+    def test_cast_uses_native_player_without_cancelling_recordings(self):
+        self.recordings.schedule(self.channel,self.items[73]['start'])
+        with patch.object(self.tv,'start_stream') as start, patch.object(self.recordings,'cancel') as cancel:
+            self.assertTrue(self.tv.cast_command({'command':'play','video':'BaW_jenozKc','position':15}))
+            start.assert_called_once_with({'url':'https://www.youtube.com/watch?v=BaW_jenozKc'})
+            cancel.assert_not_called()
+        self.assertTrue(self.tv.playing_cast)
+        self.assertEqual(self.recordings.list()[0]['state'],'queued')
+        self.key('Escape')
+        self.assertFalse(self.tv.playing_cast)
+        self.assertIsNone(self.tv.panel_mode)
+        self.assertEqual(self.recordings.list()[0]['state'],'queued')
+
+    def test_cast_pairing_is_accessible_with_remote_in_menu(self):
+        self.tv.go_home()
+        self.tv.menu.destroy()
+        self.tv.casting.process=Mock()
+        self.tv.build_menu()
+        self.key('Menu')
+        for _ in range(3):self.key('Down')
+        self.assertEqual(self.tv.menu_selected,3)
+        self.assertEqual(len(self.tv.menu_buttons),4)
+        with patch.object(self.tv,'show_cast_pairing') as pair:
+            self.key('Return')
+            pair.assert_called_once_with()
+        self.assertFalse(self.tv.menu_open)
+        self.tv.casting.process=None
+
+    def test_cast_controls_cannot_stop_or_seek_live_tv(self):
+        player=Mock();self.tv.player=player
+        self.assertTrue(self.tv.cast_command({'command':'stop'}))
+        self.assertFalse(self.tv.cast_command({'command':'seek','position':10}))
+        player.command.assert_not_called()
+        self.tv.playing_cast=True
+        self.assertTrue(self.tv.cast_command({'command':'pause'}))
+        player.command.assert_called_with('set_property','pause',True)
+        self.assertTrue(self.tv.cast_command({'command':'seek','position':10}))
+        player.command.assert_called_with('seek',10,'absolute')
+        self.tv.cast_command({'command':'volume','volume':{'level':35,'muted':True}})
+        self.assertEqual(self.tv.volume,35)
+        self.assertTrue(self.tv.muted)
+
     def test_archive_returns_to_same_channel_and_row(self):
         self.key('Up')
         selected=self.tv.panel_selected

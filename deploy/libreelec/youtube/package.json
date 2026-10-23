@@ -1,0 +1,6 @@
+{
+  "name": "iptv-thuis-youtube-receiver",
+  "private": true,
+  "type": "module",
+  "dependencies": {"yt-cast-receiver": "2.1.0"}
+}

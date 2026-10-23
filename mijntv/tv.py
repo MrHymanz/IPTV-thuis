@@ -16,6 +16,7 @@ from .player import Player
 from .logos import LogoCache
 from .display import Display
 from .catchup import phase
+from .casting import YouTubeReceiver, number
 
 BG, TILE, WHITE, MUTED, AMBER = '#0c1722', '#1c2c3a', '#f5f7fa', '#b6c7d4', '#ffda83'
 
@@ -36,6 +37,7 @@ class TV:
         self.menu_selected = 0
         self.playing_recording = None
         self.playing_catchup = None
+        self.playing_cast = False
         self.guide_generation = 0
         self.guide_return = None
         self.recording_filter = 'saved'
@@ -197,6 +199,10 @@ class TV:
         self.programme_dialog_rows = tk.Frame(self.programme_dialog, bg=TILE)
         self.programme_dialog_rows.pack(fill='x')
         self.label(self.programme_dialog, '↑ ↓ Kiezen    OK Bevestigen    Terug Sluiten', 14, color=MUTED).pack(anchor='w', pady=(18, 0))
+        self.cast_position = 0
+        self.cast_ended = False
+        self.cast_pairing_visible = False
+        self.casting = YouTubeReceiver(self.root, Path(store.path).parent, self.cast_command, self.cast_notice)
         self.build_menu()
         self.root.bind('<Key>', self.key)
         self.root.bind('<KeyRelease>', self.release_seek)
@@ -282,6 +288,69 @@ class TV:
         text = f'{status["free"] / 1_000_000_000:.0f} GB vrij' if status.get('available') else 'Opslag niet bereikbaar'
         self.storage_label.configure(text=text)
         self.root.after(30000, self.update_storage)
+
+    def cast_notice(self, event, code):
+        if event == 'pairing' and self.cast_pairing_visible:
+            self.show_error('YouTube cast · IPTV thuis\nTV-code: '+code+
+                            '\nYouTube → Instellingen → Koppelen met tv-code')
+        elif event in ('error', 'pairing-error', 'play-error'):
+            if self.playing_cast:
+                self.go_home()
+            self.show_error('YouTube cast kon niet verbinden of afspelen. Probeer opnieuw.')
+            self.root.after(7000, self.error.place_forget)
+
+    def close_cast_pairing(self):
+        self.cast_pairing_visible = False
+        self.error.place_forget()
+
+    def show_cast_pairing(self):
+        self.cast_pairing_visible = True
+        if self.casting.pair():
+            self.show_error('Kies IPTV thuis via de castknop in YouTube.\nTV-code wordt opgehaald…')
+        else:
+            self.show_error('YouTube cast is nog niet beschikbaar. Probeer het later opnieuw.')
+
+    def cast_command(self, message):
+        command = message['command']
+        if command == 'status':
+            snapshot = self.player.snapshot() if self.player and self.playing_cast else {}
+            return {'status': ('eof' if self.cast_ended else 'stopped') if not self.playing_cast else
+                    'loading' if self.loading else 'paused' if snapshot.get('pause') else 'playing',
+                    'position': snapshot.get('time-pos') or 0, 'duration': snapshot.get('duration') or 0,
+                    'volume': {'level': self.volume, 'muted': self.muted}}
+        if command == 'play':
+            self.go_home()
+            self.cast_ended = False
+            self.cast_pairing_visible = False
+            self.playing_cast = True
+            self.playing_recording = 'youtube'
+            self.cast_position = number(message.get('position', 0))
+            self.watching = True
+            self.home.place_forget()
+            self.video.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self.video.lower()
+            self.banner_label.configure(text='YouTube cast · IPTV thuis')
+            self.banner_programme.configure(text='OK: pauze · Links/rechts: spoelen · Terug: cast stoppen')
+            self.show_banner(10)
+            self.start_stream({'url': 'https://www.youtube.com/watch?v='+message['video']})
+            return self.watching and self.playing_cast
+        if not self.playing_cast:
+            return command == 'stop'
+        if command == 'stop':
+            self.go_home()
+            return True
+        if not self.player:
+            return False
+        if command in ('pause', 'resume'):
+            self.player.command('set_property', 'pause', command == 'pause')
+        elif command == 'seek':
+            self.player.command('seek', number(message['position']), 'absolute')
+        elif command == 'volume':
+            self.volume = round(number(message['volume']['level'], 100))
+            self.muted = message['volume']['muted']
+            self.player.command('set_property', 'volume', self.volume)
+            self.player.command('set_property', 'mute', self.muted)
+        return True
 
     def load_logos(self):
         try:
@@ -438,7 +507,7 @@ class TV:
         title.configure(bg=self.menu_color)
         title.pack(anchor='w', padx=int(34*self.scale), pady=(int(32*self.scale), int(42*self.scale)))
         self.menu_buttons = []
-        for index in range(3):
+        for index in range(4 if getattr(getattr(self, 'casting', None), 'process', None) else 3):
             card = tk.Canvas(self.menu, bg=self.menu_color, height=int(100*self.scale),
                              highlightthickness=0, takefocus=False, cursor='hand2')
             card.pack(fill='x', padx=int(18*self.scale), pady=int(7*self.scale))
@@ -485,6 +554,10 @@ class TV:
                              outline=color, width=2.5*scale)
             card.create_oval(cx-6*scale, cy-6*scale, cx+6*scale, cy+6*scale,
                              outline='', fill=color)
+        elif index == 3:
+            card.create_rectangle(cx-18*scale, cy-13*scale, cx+18*scale, cy+13*scale,
+                                  outline=color, width=2.5*scale)
+            card.create_polygon(cx-4*scale,cy-7*scale,cx+7*scale,cy,cx-4*scale,cy+7*scale,fill=color)
         else:
             card.create_rectangle(cx-16*scale, cy-14*scale, cx+16*scale, cy+17*scale,
                                   outline=color, width=2.5*scale)
@@ -496,7 +569,7 @@ class TV:
                     card.create_rectangle(cx+col*scale-1.5*scale, cy+row*scale-1.5*scale,
                                           cx+col*scale+1.5*scale, cy+row*scale+1.5*scale,
                                           outline='', fill=color)
-        title = ('Zenders', 'Opnames', 'Terugkijken')[index]
+        title = ('Zenders', 'Opnames', 'Terugkijken', 'YouTube cast')[index]
         card.create_text(80*scale, cy, text=title, anchor='w', justify='left',
                          fill=WHITE, font=('DejaVu Sans', int(23*scale)),
                          width=max(40, width-100*scale))
@@ -541,7 +614,7 @@ class TV:
             self.draw_menu_card(button, index)
         channel = self.channels[self.selected]['label'] if self.channels else 'Geen zender geselecteerd'
         self.menu_hint.configure(text='Voor de geselecteerde zender:\n' + channel
-                                 if self.menu_selected == 2 else 'Opnames en terugkijken\nvanuit elke zender bereikbaar.',
+                                 if self.menu_selected == 2 else 'YouTube op je telefoon:\ncast naar IPTV thuis.' if self.menu_selected == 3 else 'Opnames en terugkijken\nvanuit elke zender bereikbaar.',
                                  wraplength=int(290*self.scale))
 
     def menu_choose(self, index=None):
@@ -550,6 +623,8 @@ class TV:
         self.close_menu()
         if self.menu_selected == 0:
             self.go_home()
+        elif self.menu_selected == 3:
+            self.show_cast_pairing()
         else:
             self.open_panel('recordings' if self.menu_selected == 1 else 'guide')
 
@@ -935,6 +1010,9 @@ class TV:
 
     def go_home(self):
         self.close_programme_actions()
+        self.playing_cast = False
+        self.cast_ended = False
+        self.cast_pairing_visible = False
         if getattr(self, 'playing_catchup', None) and self.player:
             try:
                 self.player.stop_and_wait()
@@ -1171,7 +1249,12 @@ class TV:
                     self.loading = False
                     self.root.focus_force()
                     self.error.place_forget()
-                    if getattr(self, 'playing_catchup', None):
+                    if self.playing_cast:
+                        if self.cast_position:
+                            self.player.command('seek', self.cast_position, 'absolute')
+                            self.cast_position = 0
+                        self.banner_label.configure(text='YouTube cast · IPTV thuis')
+                    elif getattr(self, 'playing_catchup', None):
                         self.banner_label.configure(text='Terugkijken · '+self.playing_catchup['title'])
                     elif self.playing_recording:
                         self.banner_label.configure(text='Opname afspelen — Terug: opnames')
@@ -1180,7 +1263,14 @@ class TV:
                     self.show_banner()
                 elif (event['event']=='end-file' and event.get('reason') in ('error','eof')) or event['event']=='disconnected':
                     self.loading = False
-                    if getattr(self, 'playing_catchup', None):
+                    if self.playing_cast:
+                        ended = event.get('reason') == 'eof'
+                        self.go_home()
+                        self.cast_ended = ended
+                        if not ended:
+                            self.show_error('Deze YouTube-video kon niet worden afgespeeld.')
+                        continue
+                    elif getattr(self, 'playing_catchup', None):
                         self.open_panel('guide')
                         if event.get('reason') == 'error':
                             self.show_error('Deze uitzending kon niet worden afgespeeld. Probeer een andere uitzending.')
@@ -1374,6 +1464,9 @@ class TV:
             if key in self.action_keys:
                 return 'break'
             self.action_keys.add(key)
+        if getattr(self, 'cast_pairing_visible', False) and key in ('Escape','BackSpace','XF86Back','XF86Stop'):
+            self.close_cast_pairing()
+            return 'break'
         if getattr(self, 'programme_actions', None):
             if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Left'):
                 self.close_programme_actions()
@@ -1419,10 +1512,13 @@ class TV:
             if key in ('Escape', 'BackSpace', 'XF86Back', 'XF86Stop', 'Left', 'Right'):
                 self.close_menu()
             elif key in ('Up', 'Down'):
-                self.menu_selected = max(0, min(2, self.menu_selected + (-1 if key == 'Up' else 1)))
+                self.menu_selected = max(0, min(len(self.menu_buttons)-1, self.menu_selected + (-1 if key == 'Up' else 1)))
                 self.render_menu()
             elif key in ('Return', 'KP_Enter', 'space'):
                 self.menu_choose()
+            return 'break'
+        if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_cast', False):
+            self.go_home()
             return 'break'
         if key in ('Escape','BackSpace','XF86Back','XF86Stop') and getattr(self, 'playing_catchup', None):
             self.open_panel('guide')
@@ -1482,6 +1578,7 @@ class TV:
         try:
             self.root.mainloop()
         finally:
+            self.casting.close()
             self.logo_requests.put(None)
             if self.player:
                 self.player.close()

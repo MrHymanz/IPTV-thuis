@@ -6,3 +6,5 @@ mijntv/**/*.pyc
 !deploy/
 !deploy/libreelec/
 !deploy/libreelec/**
+
+deploy/**/node_modules/

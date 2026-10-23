@@ -16,6 +16,7 @@ De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Lin
 - [Beeldinstellingen](#beeldinstellingen)
 - [Programmagids](#programmagids-epg)
 - [Terugkijken op de tv](#terugkijken-op-de-tv)
+- [YouTube cast vanaf je telefoon](#youtube-cast-vanaf-je-telefoon)
 - [Opnemen en opslag](#opnemen-met-de-programmagids)
 - [Importgedrag](#importgedrag)
 - [Streambewaking en diagnose](#streambewaking-en-diagnose)
@@ -231,6 +232,16 @@ De app gebruikt de opgeslagen Xtream Codes-inloggegevens voor het providerarchie
 Als de favoriete livebron geen archief aanbiedt, zoekt de app een passende archiefvariant van die zender. De opgeslagen voorkeur voor live kijken blijft behouden. Programmagegevens worden op de achtergrond opgehaald en lokaal bewaard; bij een providerstoring blijven beschikbare opgeslagen gegevens en de lokale EPG bruikbaar. Ontbrekende omschrijvingen blokkeren de bediening niet. De gids Terugkijken toont tijden in de Nederlandse tijdzone (`Europe/Amsterdam`).
 
 Bij opnemen via het kijkaccount heeft de opname voorrang. Archiefweergave is geblokkeerd zolang die opname loopt. Begint een geplande opname tijdens archiefweergave, dan stopt eerst de archiefstream zodat de recorder de providerverbinding kan gebruiken. Met een afzonderlijk opnameaccount kan de archiefweergave doorgaan. Een providerarchief is geen lokale opname: alleen zelf opgenomen bestanden blijven na het verlopen van het archief beschikbaar.
+
+## YouTube cast vanaf je telefoon
+
+De LibreELEC-tv-container bevat een YouTube-ontvanger met de naam **IPTV thuis**. Verbind je iPhone of Android-telefoon met hetzelfde lokale netwerk, open YouTube en kies **Cast → IPTV thuis**. Je telefoon bedient de video, pauze, afspeelpositie en het volume. De video speelt in de bestaande tv-app; lopende of geplande IPTV-opnames blijven behouden. **Terug** op de afstandsbediening stopt de video en opent het zenderoverzicht.
+
+Verschijnt de ontvanger niet automatisch? Kies op de tv **Menu → YouTube cast**. Voer de getoonde code in de YouTube-app in via **Instellingen → Koppelen met tv-code**. De code wordt vernieuwd zolang de ontvanger actief is; gebruik de code die de tv toont. De koppeling wordt lokaal in de gegevensmap bewaard.
+
+Dit is een YouTube-ontvanger via DIAL en YouTube Lounge, geen algemene Chromecast- of AirPlay-ontvanger. Andere apps zoals Netflix vallen hier niet onder. Video’s waarvoor YouTube aanmelding of aanvullende verificatie vereist kunnen niet altijd worden afgespeeld. De ontvanger controleert of de gekozen mediastream bereikbaar is en verzorgt de door YouTube gevraagde verificatie met een lokale tokenprovider. De integratie gebruikt [yt-cast-receiver](https://github.com/patrickkfkan/yt-cast-receiver) en yt-dlp; wijzigingen bij YouTube kunnen updates noodzakelijk maken. Het verschijnen en bedienen vanaf jouw specifieke telefoon vraagt een controle in de echte YouTube-app.
+
+De gewone Docker-webpreview ontvangt geen casts. Voor een Debian/Ubuntu-desktop zijn de optionele ontvangerafhankelijkheden apart nodig; zie [de ontvangerconfiguratie](deploy/libreelec/youtube/README.md).
 
 ## Opnemen met de programmagids
 

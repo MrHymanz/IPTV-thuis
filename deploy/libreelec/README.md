@@ -59,3 +59,13 @@ Getest op een AOpen DE7200 (i7-4700MQ, Intel HD Graphics 4600) met LibreELEC 12.
 ## Mediaknoppen van USB-afstandsbediening 1915:1025
 
 Deze ontvanger meldt zijn Consumer Control-interface als tablet. Libinput behandelt hem daardoor als tabletpad en geeft volume/mute niet als toetsen door. De tv-image bevat een gerichte Xorg-regel `99-iptv-remote.conf` die alleen deze media-interface met evdev als toetsenbord uitleest. Absolute en relatieve assen van deze interface worden genegeerd. De muis en het gewone toetsenbord van de ontvanger blijven via libinput werken. Zie de [evdev-documentatie](https://xorg.freedesktop.org/archive/X11R7.5/doc/man/man4/evdev.4.html).
+
+## YouTube cast
+
+De tv-image bevat Node.js, een vastgelegde versie van `yt-cast-receiver` en yt-dlp met JavaScript-runtime. De native app start de ontvanger als kindproces; de naam in YouTube is **IPTV thuis**. Telefoon en tv moeten elkaar op het lokale netwerk kunnen bereiken. De hostnetwerkconfiguratie maakt DIAL/SSDP-discovery via UDP 1900 en de ontvanger-HTTP-poort TCP 8008 bereikbaar. **Menu → YouTube cast** vraagt een koppelcode aan als automatisch ontdekken niet lukt.
+
+Caststatus en opdrachten gaan via lokale procespipes naar de Tk-interface. Alleen YouTube-video-ID’s worden geaccepteerd; de ontvanger kan geen willekeurige streamadressen of lokale bestanden opgeven. IPTV-opnames blijven onafhankelijk draaien. Stoppen met de afstandsbediening keert terug naar het zenderoverzicht. Ontvangeridentiteit en koppeling staan onder `/data/youtube-cast`, binnen het bestaande gegevensvolume.
+
+Voor diagnose: controleer of TCP 8008 luistert en `/youtube/ssdp/device-desc.xml` een apparaat met naam IPTV thuis teruggeeft. Receiverfouten worden zonder ruwe token- of providergegevens getoond. Dit is geen algemene Google Cast-ontvanger voor andere streamingapps. Zet `IPTV_YOUTUBE_CAST=0` in de containeromgeving om de ontvanger uit te schakelen.
+
+De yt-dlp-integratie gebruikt de `mweb`-client, controleert de beschikbaarheid van de gekozen formaten en verkrijgt benodigde afspeeltokens via `bgutil-ytdlp-pot-provider` 2.0.2. De Node-ontvanger beheert deze extra dienst op uitsluitend `127.0.0.1:4416`. Die poort wordt niet op het LAN gepubliceerd en tokenuitvoer wordt niet gelogd. Dit voorkomt de vastgestelde 403-fouten bij publieke video’s waarvoor alleen het ophalen van de videometadata onvoldoende was.

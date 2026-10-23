@@ -42,6 +42,7 @@ class Player:
             '--wid=' + str(window_id), '--input-ipc-server=' + self.socket_path,
             '--input-default-bindings=no', '--input-vo-keyboard=no', '--input-terminal=no',
             '--osc=no', '--osd-level=0', '--cursor-autohide=always', '--terminal=no',
+            '--ytdl-format=bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[height<=1080]/bestvideo[height<=1080]+bestaudio/best',
             '--cache=yes', '--demuxer-max-bytes=64MiB', '--vo=gpu,x11', '--hwdec=' + hwdec,
         ] + audio, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.connection = None
