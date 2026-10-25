@@ -86,7 +86,9 @@ class TV:
         self.last_stream_sample = 0
         self.content = tk.Frame(self.root, bg=BG)
         margin = self.display_settings['margin'] / 100
-        self.content.place(relx=margin, rely=margin, relwidth=1-2*margin, relheight=1-2*margin)
+        self.content.place(relx=margin, rely=margin, relwidth=1-2*margin, relheight=1-2*margin,
+                           x=self.display_settings['overscan_x'], y=self.display_settings['overscan_y'],
+                           width=-2*self.display_settings['overscan_x'], height=-2*self.display_settings['overscan_y'])
         self.video = tk.Frame(self.content, bg='black')
         self.video.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.video.update_idletasks()
@@ -110,7 +112,8 @@ class TV:
         self.small_button(header, '☰ Menu', self.toggle_menu).pack(side='right', padx=20)
         self.label(self.home, 'Kies een zender', 42, bold=True).pack(anchor='w', padx=60)
         self.subtitle = self.label(self.home, 'Selecteer een zender en druk op OK.', 17, color=MUTED)
-        self.subtitle.pack(anchor='w', padx=60, pady=(10, 25))
+        self.subtitle.configure(height=2, anchor='nw', width=1)
+        self.subtitle.pack(anchor='w', fill='x', padx=60, pady=(10, 25))
         self.tiles = tk.Frame(self.home, bg=BG)
         self.tiles.pack(fill='both', expand=True, padx=50)
         self.tiles.grid_propagate(False)
@@ -119,12 +122,24 @@ class TV:
         for row in range(2):
             self.tiles.rowconfigure(row, weight=1, uniform='rows')
         self.buttons = []
+        self.tile_logos, self.tile_titles = [], []
         for i in range(10):
             b = tk.Button(self.tiles, bg=TILE, fg=WHITE, activebackground='#304a5a', activeforeground=WHITE,
                           font=('DejaVu Sans', int(24*self.scale), 'bold'), wraplength=int(210*self.scale),
                           bd=0, highlightthickness=4, highlightbackground=TILE, highlightcolor=AMBER,
                           takefocus=False, command=lambda i=i: self.choose(self.page*10+i))
             b.grid(row=i//5, column=i%5, sticky='nsew', padx=10, pady=10)
+            # Independent regions keep logos aligned when channel names wrap.
+            logo = tk.Label(b, bg=TILE, bd=0)
+            logo.place(relx=.5, rely=.30, anchor='center')
+            title = tk.Label(b, bg=TILE, fg=WHITE, bd=0, anchor='n', justify='center',
+                             font=('DejaVu Sans', int(24*self.scale), 'bold'))
+            title.place(relx=.05, rely=.53, relwidth=.90, relheight=.42)
+            b.bind('<Configure>', lambda event, title=title: title.configure(wraplength=max(1, int(event.width*.9))))
+            for child in (logo, title):
+                child.bind('<Button-1>', lambda event, b=b: b.invoke())
+            self.tile_logos.append(logo)
+            self.tile_titles.append(title)
             self.buttons.append(b)
         paging = tk.Frame(self.home, bg=BG)
         paging.pack(pady=20)
@@ -138,12 +153,15 @@ class TV:
         self.setup = self.label(self.home, '', 20, color=AMBER)
         self.banner = tk.Frame(self.content, bg=BG)
         banner_text = tk.Frame(self.banner, bg=BG)
-        banner_text.pack(side='left', padx=30, pady=14)
+        self.banner.columnconfigure(0, weight=1)
+        banner_text.grid(row=0, column=0, sticky='new', padx=30, pady=14)
         self.banner_label = self.label(banner_text, '', 24, bold=True)
-        self.banner_label.pack(anchor='w')
+        self.banner_label.configure(width=1, anchor='w')
+        self.banner_label.pack(anchor='w', fill='x')
         self.banner_programme = self.label(banner_text, '', 17, color=MUTED)
-        self.banner_programme.pack(anchor='w', pady=(7, 0))
-        self.small_button(self.banner, '← Zenderlijst', self.go_home).pack(side='right', padx=30, pady=14)
+        self.banner_programme.configure(height=2, width=1, anchor='nw')
+        self.banner_programme.pack(anchor='w', fill='x', pady=(7, 0))
+        self.small_button(self.banner, '← Zenderlijst', self.go_home).grid(row=0, column=2, padx=30, pady=14)
         self.error = self.label(self.content, '', 25, color=AMBER)
         self.volume_label = self.label(self.content, '', 25, bold=True)
         self.panel = tk.Frame(self.content, bg=BG)
@@ -161,7 +179,7 @@ class TV:
         self.panel_rows = tk.Frame(self.panel, bg=BG)
         self.panel_rows.pack(fill='both', expand=True, padx=60)
         self.small_button(self.panel, '← Terug naar zenders', self.go_home).pack(pady=20)
-        self.small_button(self.banner, '● Opnemen', self.record_current).pack(side='right', padx=10, pady=14)
+        self.small_button(self.banner, '● Opnemen', self.record_current).grid(row=0, column=1, padx=10, pady=14)
         self.epg_notice = tk.Frame(self.content, bg='#1c2c3a', highlightthickness=1,
                                    highlightbackground='#4a6072', padx=22, pady=16)
         self.epg_notice_heading = self.label(self.epg_notice, '', 16, color=AMBER, bold=True)
@@ -218,7 +236,7 @@ class TV:
         self.root.after(1000, self.update_fps)
         self.root.after(100, self.poll_player)
         self.root.after(200, self.present)
-        self.root.after(2000, self.check_display)
+        self.root.after(250, self.check_display)
 
     def update_fps(self):
         if self.watching and self.player and self.display_settings['show_fps']:
@@ -237,7 +255,12 @@ class TV:
         self.root.after(1000, self.update_fps)
 
     def check_display(self):
-        if Display(self.store).settings() != self.display_settings:
+        settings = Display(self.store).settings()
+        if any(settings.get(k, 0) != self.display_settings.get(k, 0) for k in ('overscan_x', 'overscan_y')):
+            self.content.place_configure(x=settings['overscan_x'], y=settings['overscan_y'],
+                                         width=-2*settings['overscan_x'], height=-2*settings['overscan_y'])
+            self.display_settings.update(overscan_x=settings['overscan_x'], overscan_y=settings['overscan_y'])
+        if settings != self.display_settings:
             self.restart_requested = True
             if self.player:
                 self.player.close()
@@ -251,7 +274,7 @@ class TV:
                 future.add_done_callback(close_prepared)
             self.root.destroy()
             return
-        self.root.after(2000, self.check_display)
+        self.root.after(250, self.check_display)
 
     def present(self):
         # Map and focus after the window manager has processed the first layout.
@@ -442,10 +465,8 @@ class TV:
 
     def update_programme(self):
         text = self.programme_text()
-        width = max(200, int(self.screen_width * (1-self.display_settings['margin']/50)
-                             * (.68 if self.menu_open else 1))-120)
-        self.subtitle.configure(text=text, wraplength=width)
-        self.banner_programme.configure(text=text, wraplength=max(200, width-350))
+        self.subtitle.configure(text=text, wraplength=0)
+        self.banner_programme.configure(text=text, wraplength=0)
 
     def render(self):
         self.update_programme()
@@ -462,12 +483,15 @@ class TV:
                         time.monotonic() >= self.logo_retry.get(url, 0)):
                     self.logo_pending.add(url)
                     self.logo_requests.put(url)
-                b.configure(text=f'{index+1:02d} · {channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
-                            image=image or '', compound='top', padx=8, pady=10,
-                            wraplength=max(80, int(((self.home.winfo_width() if self.home.winfo_width() > 1
-                                                  else self.screen_width * (1-self.display_settings['margin']/50))-100)/columns-46)),
-                            state='normal', highlightbackground=AMBER if index==self.selected else TILE,
-                            bg='#304a5a' if index==self.selected else TILE)
+                background = '#304a5a' if index == self.selected else TILE
+                b.configure(text='', image='', state='normal',
+                            highlightbackground=AMBER if index == self.selected else TILE, bg=background)
+                self.tile_logos[i].configure(image=image or '', bg=background)
+                self.tile_titles[i].configure(
+                    text=f'{index+1:02d} · {channel["label"]}' + ('' if channel['available'] else '\nNiet beschikbaar'),
+                    bg=background,
+                    wraplength=max(80, int(((self.home.winfo_width() if self.home.winfo_width() > 1
+                                            else self.screen_width * (1-self.display_settings['margin']/50))-100)/columns-46)))
                 b.grid()
             else:
                 b.grid_remove()
@@ -1056,7 +1080,7 @@ class TV:
         self.render()
 
     def show_banner(self, seconds=4):
-        self.banner.place(relx=0, rely=1, anchor='sw', relwidth=1)
+        self.banner.place(relx=0, rely=1, anchor='sw', relwidth=1, height=int(150*self.scale))
         self.banner.lift()
         if self.menu_open:
             self.menu.lift()

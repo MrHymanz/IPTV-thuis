@@ -155,6 +155,8 @@ async function loadDisplay() {
   $('display-resolution').onchange = updateRates;
   updateRates();
   $('display-margin').value = display.margin;
+  $('overscan-x').value = display.overscan_x;
+  $('overscan-y').value = display.overscan_y;
   $('display-decoder').value = display.decoder;
   $('display-show-fps').checked = display.show_fps;
   $('display-status').textContent = display.error || (display.native ? `Actief tv-signaal: ${display.current || 'onbekend'}${display.current_rate ? ' bij ' + display.current_rate + ' Hz' : ''}.` : 'Deze instantie draait alleen webbeheer. De instelling geldt voor de zelfstandige tv-app die dezelfde gegevensmap gebruikt; de browserresolutie blijft door je scherm bepaald.');
@@ -226,3 +228,21 @@ for (const panel of adminPanels) panel.addEventListener('toggle', () => {
     else localStorage.removeItem('iptv-admin-panel');
   } catch (_) {}
 });
+
+let overscanTimer, overscanQueue = Promise.resolve();
+function scheduleOverscan() {
+  clearTimeout(overscanTimer);
+  if (!$('overscan-form').reportValidity()) return;
+  overscanTimer = setTimeout(() => {
+    const body = {overscan_x:Number($('overscan-x').value), overscan_y:Number($('overscan-y').value)};
+    overscanQueue = overscanQueue.then(async () => {
+      try {
+        await api('/api/display/overscan', body);
+        $('overscan-status').textContent = `Opgeslagen: horizontaal ${body.overscan_x} px, verticaal ${body.overscan_y} px per rand. Live toegepast door de tv-app die dezelfde gegevensmap gebruikt.`;
+      } catch (error) { $('overscan-status').textContent = error.message; }
+    });
+  }, 150);
+}
+for (const id of ['overscan-x', 'overscan-y']) $(id).addEventListener('input', scheduleOverscan);
+$('overscan-form').onsubmit = event => { event.preventDefault(); scheduleOverscan(); };
+$('overscan-reset').onclick = () => { $('overscan-x').value = 0; $('overscan-y').value = 0; scheduleOverscan(); };

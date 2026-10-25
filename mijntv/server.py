@@ -212,6 +212,11 @@ class Handler(BaseHTTPRequestHandler):
                 result['id']=self.server.recordings.resume(data['id'])
             elif path == '/api/recordings/delete':
                 self.server.recordings.delete(data['id'])
+            elif path == '/api/display/overscan':
+                current = self.server.display.settings()
+                self.server.display.save(current['resolution'], current['margin'],
+                                         overscan_x=data['overscan_x'], overscan_y=data['overscan_y'])
+                result['native'] = self.server.display.native
             elif path == '/api/display':
                 self.server.display.save(data['resolution'], data['margin'], data.get('decoder'), data.get('show_fps'), data.get('refresh_rate'))
                 result['native'] = self.server.display.native

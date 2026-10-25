@@ -225,7 +225,13 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(result['refresh_rate'],'30')
         for bad in ({**body,'decoder':'invalid'},{**body,'show_fps':'true'}):
             self.assertEqual(self.request('POST','/api/display',bad)[0],400)
-        self.assertEqual(self.server.display.settings(), body)
+        self.assertEqual(self.server.display.settings(), {**body, 'overscan_x':0, 'overscan_y':0})
+        pixels = {'overscan_x':21, 'overscan_y':12}
+        self.assertEqual(self.request('POST', '/api/display/overscan', pixels, auth=False)[0], 401)
+        self.assertEqual(self.request('POST', '/api/display/overscan', pixels, custom=False)[0], 403)
+        self.assertEqual(self.request('POST', '/api/display/overscan', pixels)[0], 200)
+        self.assertEqual(self.server.display.settings(), {**body, **pixels})
+        self.assertEqual(self.request('POST', '/api/display/overscan', {**pixels, 'overscan_x':201})[0], 400)
 
 
     def test_recording_storage_and_epg_routes_are_authenticated_and_private(self):

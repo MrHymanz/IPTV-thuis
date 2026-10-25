@@ -54,6 +54,25 @@ class TVIntegration(unittest.TestCase):
                     self.assertFalse(tv.error.winfo_ismapped(), 'Geen foutmelding bij testvideo')
                 pump()
                 self.assertEqual(tv.page_label.cget('text'),'Pagina 1 van 3')
+                # Channel names and missing EPG must not move the grid or logos.
+                logo_y = tv.tile_logos[0].winfo_rooty()
+                tile_y = tv.buttons[0].winfo_rooty()
+                tv.channels[0]['label'] = 'Een heel lange zendernaam met meerdere woorden'
+                tv.render()
+                pump()
+                self.assertEqual(tv.tile_logos[0].winfo_rooty(), logo_y)
+                self.assertEqual(tv.buttons[0].winfo_rooty(), tile_y)
+                tv.show_banner()
+                pump()
+                banner_height = tv.banner.winfo_height()
+                tv.banner_programme.configure(text='Nu: programma\nStraks: volgend programma')
+                pump()
+                self.assertEqual(tv.banner.winfo_height(), banner_height)
+                tv.banner_programme.configure(text='Nu: geen programmagegevens beschikbaar')
+                pump()
+                self.assertEqual(tv.banner.winfo_height(), banner_height)
+                tv.banner.place_forget()
+
                 if os.environ.get('IPTV_SCREENSHOT'):
                     subprocess.run(['ffmpeg','-v','error','-f','x11grab','-video_size','1920x1080',
                                     '-i',os.environ['DISPLAY'],'-frames:v','1','-y',os.environ['IPTV_SCREENSHOT']],check=True)

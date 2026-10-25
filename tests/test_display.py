@@ -61,7 +61,7 @@ class DisplayTests(unittest.TestCase):
         self.display.save('3840x2160', 3)
         self.display.apply()
         self.assertEqual(run.call_args.args[0], ['xrandr','--output','HDMI-3','--mode','3840x2160'])
-        self.assertEqual(Display(Store(self.directory.name)).settings(), {'resolution':'3840x2160','margin':3,'decoder':'auto','show_fps':True,'refresh_rate':'auto'})
+        self.assertEqual(Display(Store(self.directory.name)).settings(), {'resolution':'3840x2160','margin':3,'overscan_x':0,'overscan_y':0,'decoder':'auto','show_fps':True,'refresh_rate':'auto'})
 
     @patch('mijntv.display.subprocess.run')
     def test_invalid_and_unavailable_do_not_replace_settings(self, run):
@@ -69,7 +69,7 @@ class DisplayTests(unittest.TestCase):
         for resolution, margin in [('3840x2160',0), ('bad;command',0), ('auto',11), ('auto',True), ('auto','2')]:
             with self.assertRaises(ValueError):
                 self.display.save(resolution,margin)
-        self.assertEqual(self.display.settings(), {'resolution':'auto','margin':0,'decoder':'auto','show_fps':True,'refresh_rate':'auto'})
+        self.assertEqual(self.display.settings(), {'resolution':'auto','margin':0,'overscan_x':0,'overscan_y':0,'decoder':'auto','show_fps':True,'refresh_rate':'auto'})
 
     @patch('mijntv.display.subprocess.run')
     def test_unplugged_and_failed_mode_leave_current_display(self, run):
@@ -92,3 +92,31 @@ class DisplayTests(unittest.TestCase):
             self.display.apply()
             self.assertFalse(self.display.status()['native'])
             run.assert_not_called()
+
+    def test_pixel_margins_preserved_and_validated(self):
+        self.display.native = False
+        self.display.save('auto', 0, overscan_x=17, overscan_y=9)
+        self.display.save('auto', 2)
+        saved = Display(Store(self.directory.name)).settings()
+        self.assertEqual((saved['overscan_x'], saved['overscan_y']), (17, 9))
+        for value in (-1, 201, True, 1.5, '3'):
+            with self.assertRaises(ValueError):
+                self.display.save('auto', 0, overscan_x=value)
+            self.assertEqual(self.display.settings(), saved)
+
+    def test_live_calibration_keeps_player_and_window_open(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        try:
+            from mijntv.tv import TV
+        except ImportError:
+            self.skipTest('tkinter niet beschikbaar')
+        self.display.native = False
+        state = SimpleNamespace(store=self.store, display_settings=self.display.settings(),
+                                content=Mock(), root=Mock(), player=Mock(), check_display=Mock())
+        self.display.save('auto', 0, overscan_x=21, overscan_y=12)
+        TV.check_display(state)
+        state.content.place_configure.assert_called_once_with(x=21, y=12, width=-42, height=-24)
+        state.player.close.assert_not_called()
+        state.root.destroy.assert_not_called()
+        self.assertEqual(state.display_settings['overscan_x'], 21)

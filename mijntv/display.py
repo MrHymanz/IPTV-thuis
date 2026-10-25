@@ -14,6 +14,8 @@ class Display:
     def settings(self):
         return {'resolution': self.store.setting('display_resolution', 'auto'),
                 'margin': int(self.store.setting('display_margin', '0')),
+                'overscan_x': int(self.store.setting('display_overscan_x', '0')),
+                'overscan_y': int(self.store.setting('display_overscan_y', '0')),
                 'decoder': self.store.setting('display_decoder', 'auto'),
                 'show_fps': self.store.setting('display_show_fps', '1') == '1',
                 'refresh_rate': self.store.setting('display_refresh_rate', 'auto')}
@@ -58,10 +60,14 @@ class Display:
                 'available': [r for r in RESOLUTIONS if r == 'auto' or not self.native or
                               (current and r in current['modes'])], 'error': self.error}
 
-    def save(self, resolution, margin, decoder=None, show_fps=None, refresh_rate=None):
+    def save(self, resolution, margin, decoder=None, show_fps=None, refresh_rate=None, overscan_x=None, overscan_y=None):
         if resolution not in RESOLUTIONS or type(margin) is not int or not 0 <= margin <= 10:
             raise ValueError('Kies een geldige resolutie en een beeldmarge van 0 tot 10%.')
         current = self.settings()
+        overscan_x = current['overscan_x'] if overscan_x is None else overscan_x
+        overscan_y = current['overscan_y'] if overscan_y is None else overscan_y
+        if any(type(v) is not int or not 0 <= v <= 200 for v in (overscan_x, overscan_y)):
+            raise ValueError('Kies hele pixelmarges van 0 tot 200.')
         decoder = current['decoder'] if decoder is None else decoder
         show_fps = current['show_fps'] if show_fps is None else show_fps
         if decoder not in ('auto', 'software') or type(show_fps) is not bool:
@@ -77,7 +83,8 @@ class Display:
             db.executemany('INSERT OR REPLACE INTO settings VALUES (?,?)',
                            [('display_resolution', resolution), ('display_margin', str(margin)),
                             ('display_decoder', decoder), ('display_show_fps', '1' if show_fps else '0'),
-                            ('display_refresh_rate', refresh_rate)])
+                            ('display_refresh_rate', refresh_rate),
+                            ('display_overscan_x', str(overscan_x)), ('display_overscan_y', str(overscan_y))])
 
         print(f'Beeldinstelling opgeslagen: resolutie={resolution}, marge={margin}%, tv-app={self.native}', flush=True)
 
