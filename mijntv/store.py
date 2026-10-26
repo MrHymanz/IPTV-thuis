@@ -397,8 +397,18 @@ class Store:
                     db.execute(f'DROP TABLE IF EXISTS {staging}')
                     db.execute(f'DROP TABLE IF EXISTS {previous}')
 
+    def provider_playlist(self, source):
+        from .xtream import is_xtream_source, live_playlist
+        try:
+            return fetch_playlist(source, directory=os.path.dirname(self.path))
+        except ValueError:
+            if not is_xtream_source(source):
+                raise
+            # Also handles oversized or disabled M3U downloads for the main account.
+            return live_playlist(source)
+
     def import_url(self, source):
-        with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:
+        with self.provider_playlist(source) as text:
             return self.import_playlist(text, source)
 
     def import_file(self, stream, length):
@@ -411,7 +421,7 @@ class Store:
         source = self.setting('source')
         if not source:
             raise ValueError('Upload opnieuw een bestand of stel een M3U-adres in.')
-        with fetch_playlist(source, directory=os.path.dirname(self.path)) as text:
+        with self.provider_playlist(source) as text:
             with self.import_lock:
                 if self.setting('source') != source:
                     raise ValueError('Het M3U-adres is ondertussen gewijzigd. De nieuwe instelling blijft behouden.')

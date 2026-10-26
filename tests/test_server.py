@@ -59,7 +59,7 @@ class ServerTests(unittest.TestCase):
         playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="npo1" group-title="NL| TV",NL| NPO 1 HD\nhttps://backup.test/private-stream\n'
         self.store.import_playlist(playlist.replace('backup.test', 'primary.test'))
         self.store.add_favorite(self.store.catalog()['items'][0]['id'])
-        with patch('mijntv.backup.fetch_playlist', side_effect=lambda *a, **kw: io.StringIO(playlist)):
+        with patch('mijntv.backup.live_playlist', side_effect=lambda *a, **kw: io.StringIO(playlist)):
             status, body = self.request('POST', '/api/backup-account',
                                         {'server':'https://backup.test','username':'private-user','password':'private-password'})
             self.assertEqual(status, 200)

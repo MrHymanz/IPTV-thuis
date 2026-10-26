@@ -28,7 +28,7 @@ class BackupTests(unittest.TestCase):
         self.backup = BackupAccount(self.store)
 
     def save(self, text, source='https://second.test/get.php?username=two&password=private'):
-        with patch('mijntv.backup.fetch_playlist', return_value=io.StringIO(text.replace('https://media.test/', 'https://backup-media.test/'))):
+        with patch('mijntv.backup.live_playlist', return_value=io.StringIO(text.replace('https://media.test/', 'https://backup-media.test/'))):
             return self.backup.save(source)
 
     def test_match_epg_then_country_and_name_preserving_favorites(self):
@@ -75,18 +75,25 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(self.store.favorites(playback=True), before)
         self.assertEqual(self.store.setting('source'), 'https://first.test/get.php?username=one&password=secret')
 
-    def test_disabled_m3u_uses_xtream_catalog(self):
-        with patch('mijntv.backup.fetch_playlist', side_effect=ValueError('M3U geweigerd')), patch(
-                'mijntv.backup.live_playlist', return_value=io.StringIO(
+    def test_disabled_xtream_api_uses_m3u_catalog(self):
+        with patch('mijntv.backup.live_playlist', side_effect=ValueError('API geweigerd')), patch(
+                'mijntv.backup.fetch_playlist', return_value=io.StringIO(
                     playlist(('NL| NPO 1 HD', 'NPO1.nl', 'NL| TV')))) as fallback:
             status = self.backup.save('http://second.test/get.php?username=two&password=private')
         self.assertEqual(status['matched'], 1)
         fallback.assert_called_once()
 
+    def test_live_api_skips_full_playlist_download(self):
+        with patch('mijntv.backup.live_playlist', return_value=io.StringIO(
+                playlist(('NL| NPO 1 HD', 'NPO1.nl', 'NL| TV')))), patch(
+                'mijntv.backup.fetch_playlist') as download:
+            self.backup.save('http://second.test/get.php?username=two&password=private')
+        download.assert_not_called()
+
     def test_refresh_rejects_loss_of_existing_matches(self):
         self.save(playlist(('NPO One', 'NPO1.nl', 'NL| TV'), ('NL| NJAM! HD', '', 'NL| TV')))
         before = self.store.favorites(playback=True)
-        with patch('mijntv.backup.fetch_playlist', return_value=io.StringIO(playlist(
+        with patch('mijntv.backup.live_playlist', return_value=io.StringIO(playlist(
                 ('Unrelated Movie', '', 'Movies')))):
             with self.assertRaisesRegex(ValueError, 'mist te veel'):
                 self.backup.refresh()

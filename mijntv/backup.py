@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .store import fetch_playlist, iter_m3u
-from .xtream import live_playlist
+from .xtream import is_xtream_source, live_playlist
 
 
 def identity(address):
@@ -106,11 +106,15 @@ class BackupAccount:
 
     def _import(self, source, expected=None):
         table = 'backup_import_' + uuid.uuid4().hex
-        try:
+        text = None
+        if is_xtream_source(source):
+            try:
+                # Fetch live TV only; the provider's full playlist may exceed 512 MB.
+                text = live_playlist(source)
+            except ValueError:
+                pass
+        if text is None:
             text = fetch_playlist(source, directory=str(Path(self.store.path).parent))
-        except ValueError:
-            # Some providers allow Xtream playback but disable get.php entirely.
-            text = live_playlist(source)
         with text:
             try:
                 with self.store.connect() as db:

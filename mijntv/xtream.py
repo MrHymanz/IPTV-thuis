@@ -1,10 +1,17 @@
-"""Read a live catalog from Xtream when a provider disables M3U downloads."""
+"""Read only live TV through Xtream, independently of large VOD playlists."""
 import io
 import json
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 MAX_API_BYTES = 64 * 1024 * 1024
+
+
+def is_xtream_source(source):
+    p = urlsplit(source)
+    q = parse_qs(p.query)
+    return (p.scheme in ('http', 'https') and bool(p.netloc)
+            and p.path.endswith('/get.php') and bool(q.get('username')) and bool(q.get('password')))
 
 
 def live_playlist(source):
@@ -66,7 +73,8 @@ def live_playlist(source):
             continue
         group = clean(groups.get(str(channel.get('category_id')), ''))
         epg = clean(channel.get('epg_channel_id'))
-        output.write(f'#EXTINF:-1 tvg-id="{epg}" group-title="{group}",{name}\n')
+        logo = clean(channel.get('stream_icon'))
+        output.write(f'#EXTINF:-1 tvg-id="{epg}" tvg-logo="{logo}" group-title="{group}",{name}\n')
         output.write(base + '/live/' + quote(user, safe='') + '/' + quote(password, safe='') +
                      '/' + str(identifier) + '.ts\n')
         count += 1

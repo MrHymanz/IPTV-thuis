@@ -170,7 +170,13 @@ $('display-form').onsubmit = event => {
 function recordingTime(timestamp) { return new Date(timestamp*1000).toLocaleString('nl-NL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); }
 async function loadRecordings() {
   const [storage, items, input] = await Promise.all([api('/api/storage'), api('/api/recordings'), api('/api/recording-input')]);
-  $('recording-input-status').textContent = input.configured ? `Apart opnameaccount ingesteld · ${input.channels} zenderbronnen beschikbaar. ${input.error || ''}` : 'Geen tweede account: kijken en opnemen delen dezelfde zender.';
+  $('recording-input-status').textContent = input.configured ? `Apart opnameaccount ingesteld · ${input.matched} van ${input.total} favorieten gekoppeld · ${input.channels} zenderbronnen beschikbaar. ${input.error || ''}` : 'Geen tweede account: kijken en opnemen delen dezelfde zender.';
+  $('recording-input-matches').replaceChildren();
+  if (input.configured) for (const item of input.matches) {
+    const row = document.createElement('div'); row.className = 'row';
+    row.append(title(item.label, item.matched ? item.source : 'Geen zekere match in het opnameaccount.'));
+    $('recording-input-matches').append(row);
+  }
   if (document.activeElement !== $('recording-directory')) $('recording-directory').value = storage.directory;
   $('storage-status').textContent = storage.available ? `${(storage.free/1e9).toFixed(1)} GB vrij van ${(storage.total/1e9).toFixed(1)} GB. Deze vrije ruimte wordt ook op het tv-hoofdscherm getoond.` : storage.error;
   if (!storage.recorder_available) $('storage-status').textContent += ' FFmpeg is nog niet geïnstalleerd.';

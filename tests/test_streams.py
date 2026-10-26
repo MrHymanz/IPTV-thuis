@@ -188,7 +188,7 @@ class RecordingInputTests(unittest.TestCase):
         self.rec=Recordings(self.store);self.addCleanup(self.rec.close)
 
     def test_secondary_mapping_and_no_secrets_in_public_settings(self):
-        with patch('mijntv.recordings.fetch_playlist',return_value=io.StringIO(self.playlist.replace('/one','/second-one'))):
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(self.playlist.replace('/one','/second-one'))):
             settings=self.rec.save_input(self.secondary)
         self.assertTrue(settings['configured'])
         self.assertNotIn('secret',str(settings))
@@ -199,12 +199,32 @@ class RecordingInputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'opnameaccount'):
             self.rec.recording_source(self.store.favorites(playback=True)[0])
 
+    def test_import_retains_name_matches_outside_original_group_and_reports_favorites(self):
+        playlist = '#EXTM3U\n#EXTINF:-1 group-title="DIFFERENT",NPO 1 ᴿᴬᵂ\nhttp://example.test/recording'
+        with patch('mijntv.store.fetch_playlist', return_value=io.StringIO(playlist)):
+            settings = self.rec.save_input(self.secondary)
+        self.assertEqual(settings['channels'],1)
+        self.assertEqual(settings['matched'],1)
+        self.assertEqual(settings['total'],1)
+        self.assertTrue(settings['matches'][0]['matched'])
+        self.assertNotIn('http://',str(settings['matches']))
+        self.assertEqual(self.rec.recording_source(self.store.favorites(playback=True)[0])[0],'secondary')
+
+    def test_oversized_recording_playlist_uses_live_api(self):
+        from mijntv.store import PlaylistTooLarge
+        with patch('mijntv.store.fetch_playlist', side_effect=PlaylistTooLarge()), patch(
+                'mijntv.xtream.live_playlist', return_value=io.StringIO(
+                    self.playlist.replace('/one', '/recording-one'))) as api:
+            settings = self.rec.save_input(self.secondary)
+        self.assertTrue(settings['configured'])
+        api.assert_called_once_with(self.secondary)
+
     def test_same_account_rejected_and_invalid_import_preserves_previous(self):
         with self.assertRaisesRegex(ValueError,'tweede account'):
             self.rec.save_input(self.primary.replace('private','changed-password'))
-        with patch('mijntv.recordings.fetch_playlist',return_value=io.StringIO(self.playlist)):
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO(self.playlist)):
             self.rec.save_input(self.secondary)
-        with patch('mijntv.recordings.fetch_playlist',return_value=io.StringIO('not a playlist')):
+        with patch('mijntv.store.fetch_playlist',return_value=io.StringIO('not a playlist')):
             with self.assertRaises(ValueError): self.rec.save_input('https://other.test/list')
         self.assertEqual(self.store.setting('recording_source'),self.secondary)
         self.assertEqual(self.rec.input_settings()['channels'],1)

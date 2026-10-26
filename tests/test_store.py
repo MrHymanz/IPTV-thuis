@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from mijntv.store import Store, parse_m3u, xtream_playlist_url
+from mijntv.store import Store, PlaylistTooLarge, parse_m3u, xtream_playlist_url
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -18,6 +18,15 @@ class StoreTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.store = Store(self.directory.name)
+
+    def test_oversized_xtream_playlist_import_and_refresh_use_live_api(self):
+        source='https://example.test/get.php?username=test&password=private'
+        with patch('mijntv.store.fetch_playlist',side_effect=PlaylistTooLarge()), patch(
+                'mijntv.xtream.live_playlist',side_effect=lambda source: io.StringIO(playlist('live'))):
+            self.assertEqual(self.store.import_url(source),2)
+            self.store.add_favorite(self.store.catalog()['items'][0]['id'])
+            self.assertEqual(self.store.refresh_source(),2)
+        self.assertEqual(len(self.store.favorites()),1)
 
     def test_refresh_preserves_renamed_favorites_and_updates_tokens(self):
         self.store.import_playlist(playlist(), 'https://example.test/list')

@@ -12,10 +12,12 @@ import threading
 import time
 import uuid
 from urllib.parse import parse_qsl, parse_qs, urlsplit
-from .store import fetch_playlist, iter_m3u, Store
+from .store import iter_m3u, Store
 from .maintenance import BACKGROUND_STARTUP_DELAY
 from .catchup import Catchup
 from .epg import PROGRAMME_VISIBLE
+from .backup import channel_key
+from .matching import RecordingCatalog
 
 MIN_FREE = 512 * 1024 * 1024
 END_BUFFER_SECONDS = 5 * 60
@@ -55,8 +57,17 @@ class Recordings:
 
     def input_settings(self):
         with self.store.connect() as db:
-            count=db.execute('SELECT count(*) FROM recording_channels').fetchone()[0]
-        return {'configured':bool(self.store.setting('recording_source')),'channels':count,
+            rows=[dict(r) for r in db.execute('SELECT * FROM recording_channels')]
+        configured=bool(self.store.setting('recording_source'))
+        favorites=self.store.favorites(playback=True)
+        catalog=RecordingCatalog(rows)
+        matches=[]
+        for favorite in favorites:
+            source=catalog.match(favorite) if configured else None
+            matches.append({'id':favorite['id'],'label':favorite['label'],'matched':bool(source),
+                            'source':source['name'] if source else ''})
+        return {'configured':configured,'channels':len(rows),'matches':matches,
+                'matched':sum(m['matched'] for m in matches),'total':len(favorites),
                 'error':self.store.setting('recording_source_error')}
 
     def save_input(self, source):
@@ -85,12 +96,13 @@ class Recordings:
     def _import_input(self, source):
         previous=self.store.setting('recording_source')
         favorites=self.store.favorites(playback=True)
-        epg={f['epg_id'] for f in favorites if f.get('epg_id')}
-        groups={s.get('group_name','') for f in favorites for s in f.get('sources',[f])}
+        epg={f['epg_id'].strip().casefold() for f in favorites if f.get('epg_id')}
+        names={channel_key(c.get('name') or f['label'],c.get('group_name') or '')
+               for f in favorites for c in [f]+f.get('sources',[])}
         rows=[]
-        with fetch_playlist(source,directory=str(Path(self.store.path).parent)) as text:
+        with self.store.provider_playlist(source) as text:
             for row in iter_m3u(text):
-                if row[4].strip() in epg or row[2] in groups:
+                if row[4].strip().casefold() in epg or channel_key(row[1],row[2]) in names:
                     rows.append((row[0],row[1],row[2],row[3],row[4].strip()))
         if not rows:
             raise ValueError('Geen passende zenders gevonden voor de favorieten. De vorige opname-ingang blijft behouden.')
@@ -127,20 +139,9 @@ class Recordings:
             return 'primary',(channel.get('sources') or [channel])[0]
         with self.store.connect() as db:
             rows=[dict(r) for r in db.execute('SELECT * FROM recording_channels')]
-        sources=channel.get('sources') or [channel]
-        # Prefer the same group/name as the working live source. Never use the
-        # viewing account as a silent fallback when the second account is missing.
-        for source in sources:
-            matching=[r for r in rows if r['group_name']==source.get('group_name') and
-                      Store._channel_name(r['name'])==Store._channel_name(source.get('name','')) and
-                      (not r['tvg_id'] or not channel.get('epg_id') or r['tvg_id']==channel['epg_id'])]
-            exact=[r for r in matching if r['name']==source.get('name')]
-            matching=exact or matching
-            if len(matching)==1:
-                return 'secondary',matching[0]
-        matching=[r for r in rows if channel.get('epg_id') and r['tvg_id']==channel['epg_id']]
-        if len(matching)==1:
-            return 'secondary',matching[0]
+        source=RecordingCatalog(rows).match(channel)
+        if source:
+            return 'secondary',source
         raise ValueError('Deze zender ontbreekt of is dubbelzinnig in het opnameaccount. Ververs de opname-ingang in het beheer.')
 
     def required_channel(self):
