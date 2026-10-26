@@ -115,7 +115,7 @@ async function load() {
   await loadBackup();
   await loadRecordings();
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);
-  favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten`; $('refresh').disabled = !status.has_source;
+  favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten · versie ${(status.revision || 'local').slice(0, 8)}`; $('refresh').disabled = !status.has_source;
   $('epg-refresh').disabled = !status.has_epg_source;
   $('epg-status').textContent = status.epg_updated_at ? `EPG bijgewerkt: ${new Date(status.epg_updated_at*1000).toLocaleString('nl-NL')}. Automatisch elke 4 uur.` : 'EPG wordt bij een Xtream-login automatisch opgehaald en elke 4 uur vernieuwd.';
   const selected = $('group').value; $('group').replaceChildren(new Option('Alle groepen', '')); groups.forEach(g => $('group').add(new Option(g || 'Zonder groep', g))); $('group').value = selected;

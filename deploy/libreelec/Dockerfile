@@ -22,6 +22,9 @@ COPY --from=youtube-receiver /opt/iptv-cast /opt/iptv-cast
 RUN printf '%s\n' '--js-runtimes node' '--extractor-args youtube:player_client=mweb' '--check-formats' > /etc/yt-dlp.conf
 RUN ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 ENV IPTV_YOUTUBE_CAST=1
+ARG VCS_REF=local
+ENV IPTV_REVISION=${VCS_REF}
+LABEL org.opencontainers.image.revision=${VCS_REF}
 WORKDIR /app
 COPY mijntv /app/mijntv
 COPY deploy/libreelec/session.sh /usr/local/bin/iptv-session

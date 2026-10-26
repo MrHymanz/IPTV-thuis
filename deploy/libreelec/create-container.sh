@@ -14,4 +14,4 @@ mkdir -p /storage/iptv-thuis/recordings
     --env TZ=:/etc/localtime \
     --tmpfs /tmp:exec,mode=1777 \
     --env "IPTV_AUDIO_DEVICE=${IPTV_AUDIO_DEVICE:-auto}" \
-    iptv-thuis-tv:local
+    "${IPTV_IMAGE:-iptv-thuis-tv:local}"

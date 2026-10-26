@@ -1,0 +1,12 @@
+[Unit]
+Description=Controleer IPTV thuis elk uur op een geteste GitHub-versie
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec=1h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=iptv-update.service
+
+[Install]
+WantedBy=timers.target

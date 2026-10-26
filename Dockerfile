@@ -1,6 +1,9 @@
 FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
+ARG VCS_REF=local
+ENV IPTV_REVISION=${VCS_REF}
+LABEL org.opencontainers.image.revision=${VCS_REF}
 WORKDIR /app
 RUN groupadd --gid 10001 iptv && useradd --uid 10001 --gid 10001 --no-create-home iptv && mkdir /data && chown iptv:iptv /data
 COPY --chown=iptv:iptv mijntv /app/mijntv

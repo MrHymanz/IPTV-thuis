@@ -30,7 +30,7 @@ class RecordingTVTests(unittest.TestCase):
                 tv.root.update()
                 self.assertEqual(sum(button.winfo_ismapped() for button in tv.buttons), 6)
                 self.assertGreater(tv.home.winfo_x(), 0)
-                self.assertIn('18 · Zender 18', tv.buttons[5].cget('text'))
+                self.assertIn('18 · Zender 18', tv.tile_titles[5].cget('text'))
                 self.assertEqual((tv.selected, tv.page), (17, 1))
                 tv.key(SimpleNamespace(keysym='Escape'))
                 tv.root.update()
@@ -40,6 +40,9 @@ class RecordingTVTests(unittest.TestCase):
                 self.assertEqual(tv.page_label.cget('text'), 'Pagina 2 van 3')
             finally:
                 tv.logo_requests.put(None)
+                tv.casting.close()
+                for timer in tv.root.tk.call('after', 'info'):
+                    tv.root.after_cancel(timer)
                 tv.root.destroy()
 
     def test_remote_navigation_epg_record_and_playback(self):
@@ -79,6 +82,9 @@ class RecordingTVTests(unittest.TestCase):
             finally:
                 tv.logo_requests.put(None)
                 if tv.player: tv.player.close()
+                tv.casting.close()
+                for timer in tv.root.tk.call('after', 'info'):
+                    tv.root.after_cancel(timer)
                 tv.root.destroy()
 
 if __name__ == '__main__': unittest.main()

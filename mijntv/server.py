@@ -139,6 +139,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parts.path == '/api/status':
                 self.reply(200, {'channels': store.catalog(limit=0)['total'], 'favorites': len(store.favorites()),
                                  'has_source': bool(store.setting('source')),
+                                 'revision': os.environ.get('IPTV_REVISION', 'local'),
                                  'has_epg_source': bool(self.server.epg.configuration()[0]),
                                  'epg_updated_at': float(store.setting('epg_refreshed_at', '0'))})
             elif parts.path == '/api/channels':

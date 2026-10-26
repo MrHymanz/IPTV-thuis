@@ -50,7 +50,7 @@ systemctl stop iptv-thuis.service
 systemctl start kodi
 ```
 
-Voor een update: stop de tv-service, bouw het image opnieuw en maak de container opnieuw met dezelfde datamap. Verwijder nooit de datamap. Controleer na LibreELEC-updates opnieuw Docker, videoweergave en geluid.
+Voor automatische updates vanuit GitHub: zie hieronder. Voor een handmatige update: stop de tv-service, bouw het image opnieuw en maak de container opnieuw met dezelfde datamap. Verwijder nooit de datamap. Controleer na LibreELEC-updates opnieuw Docker, videoweergave en geluid.
 
 ## Gecontroleerde installatie
 
@@ -69,3 +69,42 @@ Caststatus en opdrachten gaan via lokale procespipes naar de Tk-interface. Allee
 Voor diagnose: controleer of TCP 8008 luistert en `/youtube/ssdp/device-desc.xml` een apparaat met naam IPTV thuis teruggeeft. Receiverfouten worden zonder ruwe token- of providergegevens getoond. Dit is geen algemene Google Cast-ontvanger voor andere streamingapps. Zet `IPTV_YOUTUBE_CAST=0` in de containeromgeving om de ontvanger uit te schakelen.
 
 De yt-dlp-integratie gebruikt de `mweb`-client, controleert de beschikbaarheid van de gekozen formaten en verkrijgt benodigde afspeeltokens via `bgutil-ytdlp-pot-provider` 2.0.2. De Node-ontvanger beheert deze extra dienst op uitsluitend `127.0.0.1:4416`. Die poort wordt niet op het LAN gepubliceerd en tokenuitvoer wordt niet gelogd. Dit voorkomt de vastgestelde 403-fouten bij publieke video’s waarvoor alleen het ophalen van de videometadata onvoldoende was.
+
+## Automatische updates voor meerdere huishoudens
+
+Elke mediacenter-pc draait dezelfde appcode, met zijn eigen `/storage/iptv-thuis/data`, beheerlogin, IPTV-accounts, favorieten en opnames. Er komt geen centrale accountdatabase en er worden geen privégegevens naar GitHub verstuurd. De pc's bouwen de gemeenschappelijke versie lokaal met Docker-cache; er is geen containerregistry of gedeeld GitHub-token nodig.
+
+De workflow [Validate app](../../.github/workflows/validate.yml) voert bij een push naar `main` de tests uit en bouwt het native tv-image op GitHub. De updater accepteert uitsluitend een commit waarvoor precies die push-workflow succesvol is afgerond. Lopende, ontbrekende of mislukte controles houden de bestaande versie actief. De broncode wordt via HTTPS uit een openbaar GitHub-repository opgehaald, vastgezet op de volledige commit-SHA. Een privé-repository wordt niet door deze tokenloze updater ondersteund.
+
+Eenmalig per pc, na installatie van een actuele tv-app die de updateblokkade ondersteunt:
+
+```sh
+sh /storage/iptv-thuis/source/deploy/libreelec/install-updates.sh
+```
+
+Dit installeert een lokale `updates.json`, updater en systemd-timer. De eerste controle is circa 15–25 minuten na opstarten, daarna circa elke 60–70 minuten. Het standaardkanaal is `MrHymanz/IPTV-thuis`, branch `main`. Voor familie met een eigen fork kan alleen de repository in `/storage/iptv-thuis/updates.json` worden aangepast. De bestaande lokale configuratie wordt bij herinstallatie behouden.
+
+De pc bouwt alleen als er geen opname loopt of binnen tien minuten begint. Na de build volgt dezelfde controle opnieuw. Een SQLite-transactie blokkeert nieuwe opnamestarts en nieuwe plannen tijdelijk tijdens de containerwissel; de recorder en updater gebruiken daarvoor dezelfde databaseblokkade. Begint er tijdens de build een opname, dan blijft de huidige app draaien en wacht de update tot een volgende controle. Gewoon tv-kijken kan door de uiteindelijke herstart kort worden onderbroken.
+
+Voor de wissel wordt de vorige container bewaard als `iptv-thuis-tv-previous` en wordt lokaal een privé-databasebackup gemaakt in `database-before-update.sqlite`. Accounts, favorieten en bestaande opnames blijven in hun eigen mappen. De ingestelde audio-uitgang blijft behouden. Start de nieuwe app niet gezond binnen twee minuten, dan herstelt de updater de vorige container en database. Een mislukte commit wordt niet elk uur opnieuw geïnstalleerd; een volgende GitHub-commit kan wel worden geprobeerd. De updateblokkade vervalt vanzelf na vijf minuten bij een afgebroken updater.
+
+De bestaande launcher kan bij een mislukte start eerst naar Kodi uitwijken. Bij het terugzetten naar de vorige werkende container stopt de updater Kodi weer voordat de tv-app terugkomt. De updater opent de tv-app niet als die bewust uitgeschakeld of gestopt is. Automatisch terugzetten beschermt tegen startfouten; fouten die pas tijdens gebruik optreden vereisen nog controle.
+
+Status en handmatige controle:
+
+```sh
+systemctl list-timers iptv-update.timer
+systemctl start iptv-update.service
+journalctl -u iptv-update.service -n 50
+cat /storage/iptv-thuis/update-state.json
+```
+
+Het beheer toont bovenaan de geïnstalleerde commit als versienummer. Lokale ontwikkelimages zonder commitlabel tonen `local`.
+
+Uitschakelen:
+
+```sh
+systemctl disable --now iptv-update.timer
+```
+
+De updater verwijdert geen opnames en ruimt geen willekeurige Docker-images op. Houd minimaal 4 GB plus de grootte van de database vrij voor build, backup en herstel. De databasebackup bevat privégegevens, staat uitsluitend lokaal en hoort niet in Git. De installer ondersteunt voorlopig de bestaande LibreELEC Generic x86_64-opzet, met Docker-add-on, Python 3 en systemd; installeer per familielid eerst de tv-app en hun eigen account.

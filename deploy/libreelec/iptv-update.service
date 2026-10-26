@@ -1,0 +1,13 @@
+[Unit]
+Description=IPTV thuis update vanuit GitHub
+After=network-online.target service.system.docker.service
+Requires=service.system.docker.service
+ConditionPathExists=/storage/iptv-thuis/updates.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /storage/iptv-thuis/update.py
+TimeoutStartSec=90min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

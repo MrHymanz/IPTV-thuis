@@ -320,6 +320,10 @@ class Recordings:
                 raise ValueError('Er is minder dan 512 MB vrij op de opnameschijf.')
             channel = next((f for f in self.store.favorites(playback=True) if f['id']==channel_id),None)
             with self.store.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                lease=db.execute("SELECT value FROM settings WHERE key='update_lease_until'").fetchone()
+                if lease and float(lease[0])>now:
+                    raise ValueError('De app wordt bijgewerkt. Probeer de opname over een paar minuten opnieuw.')
                 if not channel or not channel['url']:
                     raise ValueError('Deze zender is niet beschikbaar.')
                 if programme_start is None:
@@ -424,6 +428,15 @@ class Recordings:
                 self.process.send_signal(signal.SIGINT)
 
     def start(self, row):
+        # Mark the start before spawning ffmpeg, so an updater cannot race it.
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            lease=db.execute("SELECT value FROM settings WHERE key='update_lease_until'").fetchone()
+            if lease and float(lease[0])>time.time():
+                return
+            if not db.execute("UPDATE recordings SET state='recording' WHERE id=? AND state='queued'",
+                              (row['id'],)).rowcount:
+                return
         manifest = None
         pinned = False
         try:

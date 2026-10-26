@@ -16,6 +16,7 @@ De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Lin
 - [Beeldinstellingen](#beeldinstellingen)
 - [Programmagids](#programmagids-epg)
 - [Terugkijken op de tv](#terugkijken-op-de-tv)
+- [Updates voor meerdere mediacenter-pc’s](#updates-voor-meerdere-mediacenter-pcs)
 - [YouTube cast vanaf je telefoon](#youtube-cast-vanaf-je-telefoon)
 - [Backupaccount voor live-tv](#backupaccount-voor-live-tv)
 - [Opnemen en opslag](#opnemen-met-de-programmagids)
@@ -334,3 +335,9 @@ Controleer voor dagelijks gebruik op de tv-pc: koude boot, HDMI-geluid, vijf ech
 Gebruik de broncode uit Git of het archief uit `python3 tools/build.py`. Het archief bevat uitsluitend de door Git bijgehouden projectbestanden, zonder `.git`, lokale instellingen of Git-remotes. Lokale databases, playlists, beheerwachtwoorden en SSH-sleutels worden uitgesloten met `.gitignore`. De tests gebruiken fictieve inloggegevens en voorbeeldadressen. De README-screenshots tonen de huidige interface met voorbeeldgegevens, zonder provideradressen of inloggegevens.
 
 De Docker-volumes en de gegevensmap van de tv-pc bevatten wel de echte providergegevens en beheerconfiguratie; deel die niet mee als broncode. `.gitignore` verwijdert niets dat eerder gecommit is, en beschermt niet tegen geheimen die je in een bronbestand schrijft. De Git-geschiedenis kan nog een oud lokaal repository-adres bevatten. Het bronarchief bevat die geschiedenis niet.
+
+## Updates voor meerdere mediacenter-pc’s
+
+De tv-app en het lokale webbeheer kunnen op iedere mediacenter-pc draaien, terwijl GitHub de gemeenschappelijke appversie levert. Accounts, wachtwoorden, favorieten en opnames blijven per huishouden lokaal. De LibreELEC-updater controleert elk uur op een nieuwe commit met geslaagde GitHub-tests en een geslaagde native Docker-build. De pc bouwt die versie zelf, wacht bij lopende of nabije opnames en zet de vorige container en database terug als opstarten mislukt.
+
+Zie [installatie en werking van automatische updates](deploy/libreelec/README.md#automatische-updates-voor-meerdere-huishoudens). Updates zijn per pc eenmalig in te schakelen; dit geldt voor de LibreELEC-tv inclusief diens eigen webbeheer. Een afzonderlijke web-only Docker Compose-installatie wordt hiermee niet automatisch vervangen.

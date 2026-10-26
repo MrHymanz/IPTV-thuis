@@ -97,7 +97,7 @@ class TVIntegration(unittest.TestCase):
                 self.assertIs(tv.root.focus_get(), tv.root, 'Afstandsbediening blijft bij de app')
                 tv.choose(29)
                 loaded()
-                tv.key(SimpleNamespace(keysym='Next'))
+                tv.key(SimpleNamespace(keysym='Right'))
                 self.assertEqual(tv.selected,0, 'Laatste favoriet zapt naar eerste')
                 loaded()
                 tv.key(SimpleNamespace(keysym='Escape'))
@@ -112,6 +112,10 @@ class TVIntegration(unittest.TestCase):
             finally:
                 if tv.player:
                     tv.player.close()
+                tv.casting.close()
+                tv.logo_requests.put(None)
+                for timer in tv.root.tk.call('after', 'info'):
+                    tv.root.after_cancel(timer)
                 tv.root.destroy()
                 files.shutdown()
                 files.server_close()

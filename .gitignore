@@ -44,3 +44,8 @@ recordings/
 
 # YouTube receiver dependencies installed from the lockfile
 node_modules/
+
+# Per-device updater configuration/state (never distributed through Git)
+updates.json
+update-state.json
+update.lock
