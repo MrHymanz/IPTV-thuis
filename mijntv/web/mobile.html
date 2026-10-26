@@ -1,39 +1,57 @@
 <!doctype html>
 <html lang="nl">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f7f7f2">
-<meta name="apple-mobile-web-app-title" content="IPTV thuis">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f7f2"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="IPTV thuis">
 <title>IPTV thuis · mobiel</title>
-<link rel="stylesheet" href="/mobile.css">
-<script src="/mobile.js" defer></script>
+<link rel="stylesheet" href="/mobile.css"><script src="/hls.min.js" defer></script><script src="/mobile.js" defer></script>
 </head>
 <body>
 <div class="app">
-<header class="topbar"><a class="brand" href="/mobile" aria-label="IPTV thuis start"><span class="brand-mark">tv<span>•</span></span><span>IPTV<span class="brand-light"> thuis</span></span></a><button class="avatar" id="about" aria-label="Over deze mockup">H</button></header>
+<header class="topbar"><a class="brand" href="#home" aria-label="IPTV thuis start"><span class="brand-mark">tv<span>•</span></span><span>IPTV<span class="brand-light"> thuis</span></span></a><button class="avatar" id="about" aria-label="Verbinding en instellingen">⚙︎</button></header>
 <main id="main" tabindex="-1">
+<p id="connection-message" class="notice" role="status" hidden></p>
 <section id="home-view" class="view">
-<div class="greeting"><p class="eyebrow">JOUW TV, OVERAL THUIS</p><h1>Even tijd voor jezelf.</h1><p>Wat wil je vandaag kijken?</p></div>
-<button class="hero" data-play="De mooiste treinreizen" data-channel="NPO 2" data-duration="3000">
-<span class="hero-art" aria-hidden="true"><span class="sun"></span><span class="mountain mountain-back"></span><span class="mountain mountain-front"></span><span class="lake"></span><span class="rail"></span></span>
-<span class="hero-top"><span class="tag light">UITGELICHT</span><span class="hero-channel">npo <b>2</b></span></span>
-<span class="hero-bottom"><span class="hero-meta">REIZEN · 50 MIN</span><strong>Een andere route.<br>Een nieuw verhaal.</strong><span class="hero-description">De mooiste treinreizen door de Alpen</span><span class="watch-pill"><span aria-hidden="true">▶</span> Bekijk programma</span></span>
-</button>
-<div class="section-heading"><h2>Nu op tv <span class="live-dot"></span></h2><button class="text-button" data-go="channels">Alle zenders <span aria-hidden="true">↗</span></button></div>
-<div id="home-channels" class="channel-list"></div>
-<div class="section-heading"><h2>Verder kijken</h2><button class="text-button" data-go="recordings">Opnames ↗</button></div>
-<button class="continue-card" data-play="Dwars door de Lage Landen" data-channel="NPO 2" data-duration="3000" data-position="1140"><span class="episode-art" aria-hidden="true">↟</span><span class="continue-copy"><span class="small-muted">NPO 2 · AFLEVERING 3</span><strong>Dwars door de Lage Landen</strong><span class="mini-track"><span></span></span><span class="small-muted">Nog 31 minuten</span></span><span class="round-play" aria-hidden="true">▶</span></button>
-<p class="demo-footer">Een voorproefje van jouw mobiele tv.<br>Mockup met voorbeeldprogramma’s.</p>
+<div class="greeting"><p class="eyebrow">JOUW TELEVISIE, BINNEN HANDBEREIK</p><h1 id="greeting">Welkom thuis.</h1><p>Een goed moment om even te kijken.</p></div>
+<button class="hero" id="featured" disabled><span class="hero-grid" aria-hidden="true"></span><span class="hero-top"><span class="tag light"><span class="live-dot"></span> NU LIVE</span><span id="hero-logo" class="hero-logo"></span></span><span class="hero-bottom"><span id="hero-channel" class="hero-meta">Je favorieten laden…</span><strong id="hero-title">Jouw tv. Ook hier.</strong><span id="hero-time" class="hero-description"></span><span class="hero-track"><span id="hero-progress"></span></span><span class="watch-pill"><span aria-hidden="true">▶</span> Live kijken</span></span></button>
+<div class="section-heading"><h2>Nu op tv <span class="live-dot"></span></h2><button class="text-button" data-go="channels">Alle zenders ↗</button></div>
+<div id="home-channels" class="channel-list"><p class="empty">Je zenders worden opgehaald…</p></div>
+<div class="section-heading"><h2>Voor een rustig moment</h2><button class="text-button" data-go="recordings">Opnames ↗</button></div><div id="home-recordings"></div>
+<div class="connection-card"><span class="connection-dot"></span><p><strong>Verbonden met je mediacenter</strong><span>Thuis via wifi, onderweg via je WireGuard-VPN.</span></p></div>
 </section>
-<section id="channels-view" class="view" hidden><p class="eyebrow">ALLES BINNEN HANDBEREIK</p><h1>Jouw zenders.</h1><p class="subtitle">Van het laatste nieuws tot de laatste minuut.</p><label class="search"><span aria-hidden="true">⌕</span><input id="channel-search" type="search" placeholder="Zoek een zender of programma" autocomplete="off" aria-label="Zoek een zender of programma"></label><div class="chips" id="filters" aria-label="Filter zenders"><button class="chip active" data-filter="Alles" aria-pressed="true">Alles</button><button class="chip" data-filter="Nieuws" aria-pressed="false">Nieuws</button><button class="chip" data-filter="Sport" aria-pressed="false">Sport</button><button class="chip" data-filter="Entertainment" aria-pressed="false">Entertainment</button></div><div class="section-heading"><h2>Live kijken <span class="live-dot"></span></h2><span class="small-muted" id="channel-count"></span></div><div id="all-channels" class="channel-list"></div><p id="empty-search" class="empty" hidden>Geen zenders gevonden. Probeer een andere zoekterm.</p></section>
-<section id="recordings-view" class="view" hidden><p class="eyebrow">BEWAARD VOOR EEN GOED MOMENT</p><h1>Jouw opnames.</h1><p class="subtitle">Kijk wanneer het jou uitkomt.</p><div class="storage"><span class="storage-icon" aria-hidden="true">▤</span><div><strong>Ruimte voor meer verhalen</strong><span>128 GB van 500 GB gebruikt · voorbeeld</span><span class="storage-track"><span></span></span></div></div><div class="section-heading"><h2>Opgenomen</h2><span class="small-muted">3 programma’s</span></div><div id="recordings-list"></div><div class="quiet-note"><span aria-hidden="true">◷</span><p><strong>Later komt ook goed uit.</strong><br>Plan een opname via de programmagids.</p><button class="text-button" data-go="guide">Open gids ↗</button></div></section>
-<section id="guide-view" class="view" hidden><p class="eyebrow">MIS GEEN MOMENT</p><h1>De programmagids.</h1><p class="subtitle">Een avond vol mogelijkheden.</p><div class="guide-date"><span>Vandaag <span id="guide-date"></span></span><span class="tag">DEMO</span></div><div id="guide-list"></div><p class="demo-footer">Opnames plannen wordt hier gesimuleerd.<br>Je echte opnameplanning blijft ongewijzigd.</p></section>
+<section id="channels-view" class="view" hidden>
+<p class="eyebrow">ALLES BINNEN HANDBEREIK</p><h1>Jouw zenders.</h1><p class="subtitle">Je vertrouwde favorieten, in je hand.</p>
+<label class="search"><span aria-hidden="true">⌕</span><input id="channel-search" type="search" placeholder="Zoek een zender of programma" autocomplete="off" aria-label="Zoek een zender of programma"></label>
+<div class="chips" id="filters" aria-label="Filter zenders"><button class="chip active" data-filter="Alles" aria-pressed="true">Alles</button><button class="chip" data-filter="Nieuws" aria-pressed="false">Nieuws</button><button class="chip" data-filter="Sport" aria-pressed="false">Sport</button><button class="chip" data-filter="Film" aria-pressed="false">Film</button><button class="chip" data-filter="Muziek" aria-pressed="false">Muziek</button></div>
+<div class="section-heading"><h2>Live kijken <span class="live-dot"></span></h2><span class="small-muted" id="channel-count"></span></div>
+<div id="all-channels" class="channel-list"></div><p id="empty-search" class="empty" hidden>Geen zenders gevonden. Probeer een andere zoekterm.</p>
+</section>
+<section id="recordings-view" class="view" hidden>
+<p class="eyebrow">BEWAARD VOOR EEN GOED MOMENT</p><h1>Jouw opnames.</h1><p class="subtitle">Kijk wanneer het jou uitkomt.</p>
+<div class="storage"><span class="storage-icon" aria-hidden="true">▤</span><div><strong>Ruimte voor meer verhalen</strong><span id="storage-text">Opslag wordt opgehaald…</span><span class="storage-track"><span id="storage-progress"></span></span></div></div>
+<div class="chips" id="recording-filters"><button class="chip active" data-recording-filter="saved" aria-pressed="true">Opgenomen</button><button class="chip" data-recording-filter="planned" aria-pressed="false">Gepland & bezig</button></div>
+<div class="section-heading"><h2 id="recordings-heading">Opgenomen</h2><span class="small-muted" id="recording-count"></span></div><div id="recordings-list"></div>
+<div class="quiet-note"><span aria-hidden="true">◷</span><p><strong>Later komt ook goed uit.</strong><br>Plan een opname vanuit de gids.</p><button class="text-button" data-go="guide">Open gids ↗</button></div>
+</section>
+<section id="guide-view" class="view" hidden>
+<p class="eyebrow">NU, STRAKS EN NOG EEN KEER</p><h1>Een goed programma.</h1><p class="subtitle">Kijk terug of bewaar iets voor later.</p>
+<label class="guide-select" for="guide-channel">Kies een zender<select id="guide-channel"></select></label>
+<div class="chips" id="guide-days"><button class="chip" data-day="-1" aria-pressed="false">Gisteren</button><button class="chip active" data-day="0" aria-pressed="true">Vandaag</button><button class="chip" data-day="1" aria-pressed="false">Morgen</button></div>
+<div class="section-heading"><h2 id="guide-heading">Vandaag</h2><button id="guide-refresh" class="text-button">Verversen ↻</button></div><p id="guide-notice" class="small-muted"></p><div id="guide-list"></div>
+</section>
 </main>
-<nav class="bottom-nav" aria-label="Hoofdnavigatie"><button class="nav-button active" data-go="home" aria-current="page"><span aria-hidden="true">⌂</span>Home</button><button class="nav-button" data-go="channels"><span aria-hidden="true">▦</span>Zenders</button><button class="nav-button" data-go="recordings"><span aria-hidden="true">◉</span>Opnames</button><button class="nav-button" data-go="guide"><span aria-hidden="true">▤</span>TV-gids</button></nav>
+<nav class="bottom-nav" aria-label="Hoofdnavigatie"><button class="nav-button active" data-go="home" aria-current="page"><span aria-hidden="true">⌂</span>Home</button><button class="nav-button" data-go="channels"><span aria-hidden="true">▦</span>Zenders</button><button class="nav-button" data-go="guide"><span aria-hidden="true">◷</span>Terugkijken</button><button class="nav-button" data-go="recordings"><span aria-hidden="true">◉</span>Opnames</button></nav>
 </div>
-<dialog id="player" aria-labelledby="player-title"><div class="player-header"><button id="close-player" class="icon-button" aria-label="Sluit speler">✕</button><span>IPTV thuis <span class="tag">DEMO</span></span></div><div class="player-visual"><span class="player-landscape" aria-hidden="true">↟</span><span class="player-demo">Voorbeeldspeler · geen videostream</span></div><div class="player-body"><p class="eyebrow" id="player-channel"></p><h2 id="player-title"></h2><p class="player-caption">Jouw programma, op jouw moment.</p><label for="timeline" class="sr-only">Afspeelpositie</label><input type="range" id="timeline" min="0" max="3000" value="0"><div class="time-labels"><span id="elapsed">0:00</span><span id="total">50:00</span></div><div class="playback-controls"><button id="rewind" class="seek-button" aria-label="15 seconden terug">↶<span>15</span></button><button id="pause" class="pause-button" aria-label="Pauzeren">Ⅱ</button><button id="forward" class="seek-button" aria-label="15 seconden vooruit">↷<span>15</span></button></div><p class="player-hint">Tik om 15 seconden te spoelen.<br>Houd vast voor stappen van maximaal 30 seconden.</p></div></dialog>
-<dialog id="about-dialog" aria-labelledby="about-title"><div class="about-content"><span class="brand-mark">tv<span>•</span></span><h2 id="about-title">Een kleine tv.<br>Grootse plannen.</h2><p>Dit is een klikbare mobiele mockup van IPTV thuis. Ontdek zenders, bekijk voorbeeldopnames en probeer de speler.</p><p>Alle programma’s en opslaggegevens zijn voorbeelden. Live kijken en echte opnames volgen in een volgende stap.</p><button id="close-about" class="primary-button">Ontdekken</button></div></dialog>
-<div id="toast" role="status" class="toast" hidden></div>
-</body>
-</html>
+<dialog id="player" aria-labelledby="player-title">
+<div class="player-header"><button id="close-player" class="icon-button" aria-label="Sluit speler">✕</button><span>IPTV thuis <span class="tag" id="player-kind">LIVE</span></span></div>
+<div class="player-visual"><video id="video" playsinline controls preload="none"></video><div id="player-loading" class="player-loading" role="status"><span class="spinner"></span><span id="player-status">Verbinding maken…</span></div></div>
+<div class="player-body"><p class="eyebrow" id="player-channel"></p><h2 id="player-title"></h2><p id="player-message" class="player-caption"></p>
+<div id="timeline-wrap"><label for="timeline" class="sr-only">Afspeelpositie</label><input type="range" id="timeline" min="0" max="100" value="0"><div class="time-labels"><span id="elapsed">0:00</span><span id="total">Live</span></div></div>
+<div class="playback-controls"><button id="rewind" class="seek-button" aria-label="15 seconden terug">↶<span>15</span></button><button id="pause" class="pause-button" aria-label="Afspelen">▶</button><button id="forward" class="seek-button" aria-label="15 seconden vooruit">↷<span>15</span></button></div>
+<div class="player-actions"><button id="go-live" class="text-button">Naar live ●</button><button id="retry-player" class="text-button" hidden>Opnieuw proberen ↻</button><button id="fullscreen" class="text-button">Volledig scherm ⤢</button></div>
+<p class="player-hint">Tik om 15 seconden te spoelen.<br>Houd vast voor stappen van maximaal 30 seconden.</p></div>
+</dialog>
+<dialog id="programme" aria-labelledby="programme-title"><div class="programme-content"><button id="close-programme" class="icon-button close-corner" aria-label="Sluiten">✕</button><p id="programme-meta" class="eyebrow"></p><h2 id="programme-title"></h2><p id="programme-time" class="small-muted"></p><p id="programme-description"></p><div id="programme-actions"></div></div></dialog>
+<dialog id="about-dialog" aria-labelledby="about-title"><div class="about-content"><span class="brand-mark">tv<span>•</span></span><h2 id="about-title">Je eigen tv.<br>Ook op je telefoon.</h2><p>Je kijkt via je mediacenter. Buiten je thuisnetwerk zet je eerst je WireGuard-VPN aan.</p><p>De tv en opnames houden voorrang. Voor mobiel kiezen we automatisch een vrij kijkaccount. Je IPTV-wachtwoorden blijven op het mediacenter.</p><p id="version" class="small-muted"></p><a class="settings-link" href="/admin">Open beheer ↗</a><button id="close-about" class="primary-button">Terug naar mijn tv</button></div></dialog>
+<div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
+</body></html>

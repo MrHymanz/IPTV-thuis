@@ -5,12 +5,13 @@ from pathlib import Path
 import queue
 import logging
 import secrets
+import hashlib
 import socket
 import subprocess
 import tempfile
 import threading
 import time
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, parse_qs, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError,URLError
 
@@ -177,7 +178,10 @@ class Feed:
 
 
 class StreamHub:
-    def __init__(self):
+    def __init__(self, store=None):
+        self.store = store
+        self.mobile = None
+        self.external_accounts = {}
         self.lock = threading.RLock()
         self.feeds = {}
         self.slots = {}
@@ -219,6 +223,41 @@ class StreamHub:
     def url(self, feed):
         return f'http://127.0.0.1:{self.server.server_port}/stream/{feed.token}'
 
+    def account_key(self, account):
+        setting = {'primary':'source', 'backup':'backup_source', 'recording':'recording_source'}[account]
+        address = self.store.setting(setting) if self.store else ''
+        params = parse_qs(urlsplit(address).query)
+        # Aliases of the same login share a reservation, even across server hostnames.
+        if params.get('username') and params.get('password'):
+            return hashlib.sha256((params['username'][0]+'\0'+params['password'][0]).encode()).hexdigest()
+        return account
+
+    def occupied_accounts(self):
+        with self.lock:
+            accounts = {(getattr(f, 'account_key', None) or self.account_key(
+                            f.source.get('account', 'recording' if slot=='secondary' else 'primary')))
+                        for slot,f in self.slots.items() if not f.closed or f.recording}
+            accounts.update(self.external_accounts.values())
+            # Keep the dedicated recording login available, including when idle.
+            if self.store and self.store.setting('recording_source'):
+                accounts.add(self.account_key('recording'))
+            return accounts
+
+    def preempt_mobile(self, account):
+        with self.lock:
+            if self.mobile and self.mobile['key'] == self.account_key(account):
+                self.mobile['stop']()
+                self.mobile = None
+
+    def reserve_account(self, owner, account):
+        with self.lock:
+            self.preempt_mobile(account)
+            self.external_accounts[owner] = self.account_key(account)
+
+    def release_account(self, owner):
+        with self.lock:
+            self.external_accounts.pop(owner, None)
+
     def acquire(self, slot, channel, source, recording=False):
         with self.lock:
             current = self.slots.get(slot)
@@ -228,6 +267,23 @@ class StreamHub:
                 if current.closed:
                     raise RecordingConflict('De opnamebron is onderbroken. Stop de opname voordat je opnieuw verbindt.')
                 return current
+            account = source.get('account', 'recording' if slot=='secondary' else 'primary')
+            key = self.account_key(account)
+            self.preempt_mobile(account)
+            for other_slot, feed in self.slots.items():
+                if other_slot == slot or (feed.closed and not feed.recording):
+                    continue
+                other_key = getattr(feed, 'account_key', None) or self.account_key(
+                    feed.source.get('account', 'recording' if other_slot=='secondary' else 'primary'))
+                if other_key == key:
+                    if not feed.closed and feed.channel['id'] == channel['id']:
+                        if current and current is not feed:
+                            current.close()
+                            self.feeds.pop(current.token, None)
+                        feed.recording = feed.recording or recording
+                        self.slots[slot] = feed
+                        return feed
+                    raise RecordingConflict('Dit account is al bezet door de tv of een opname.')
             if current and not current.closed and current.channel['id'] == channel['id'] and (recording or current.source['id'] == source['id']):
                 current.recording = recording
                 return current
@@ -235,6 +291,7 @@ class StreamHub:
                 current.close()
                 self.feeds.pop(current.token,None)
             feed = Feed(channel,source)
+            feed.account_key = key
             feed.recording = recording
             self.slots[slot] = feed
             self.feeds[feed.token] = feed

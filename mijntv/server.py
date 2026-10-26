@@ -16,6 +16,7 @@ from .epg import EPG
 from .display import Display
 from .recordings import Recordings
 from .streams import StreamHub
+from .mobile import MobilePlayback
 
 
 def hash_password(password, salt):
@@ -49,10 +50,13 @@ class AdminServer(ThreadingHTTPServer):
         self.epg = EPG(store)
         self.display = Display(store)
         super().__init__(address, Handler)
-        self.streams = StreamHub()
+        self.streams = StreamHub(store)
         self.recordings = Recordings(store,self.streams)
+        self.mobile = MobilePlayback(store, self.recordings, self.streams)
 
     def server_close(self):
+        if hasattr(self,'mobile'):
+            self.mobile.close()
         if hasattr(self,'streams'):
             self.streams.close()
         super().server_close()
@@ -72,7 +76,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -97,7 +101,21 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(parts.query)
         store = self.server.store
         try:
-            if parts.path.startswith('/api/logos/'):
+            if parts.path == '/api/mobile/status':
+                self.reply(200, self.server.mobile.status(params.get('token', [''])[0]))
+            elif parts.path == '/api/mobile/guide':
+                guide = self.server.recordings.catchup.guide(params.get('id', [''])[0])
+                fields = ('start', 'end', 'title', 'description', 'archive', 'archive_days')
+                self.reply(200, {'notice': guide.get('notice', ''), 'days': guide.get('days', 0),
+                                 'programmes': [{k: p[k] for k in fields if k in p}
+                                                for p in guide.get('programmes', [])]})
+            elif parts.path.startswith('/api/mobile/hls/'):
+                segments = parts.path.split('/')
+                if len(segments) != 6:
+                    raise ValueError('Ongeldig videobestand.')
+                data, mime = self.server.mobile.asset(segments[4], segments[5])
+                self.reply(200, data, mime)
+            elif parts.path.startswith('/api/logos/'):
                 url = store.channel_logo(parts.path[len('/api/logos/'):])
                 if not url:
                     self.reply(404, {'error': 'Geen zenderlogo.'}); return
@@ -149,16 +167,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, store.groups())
             elif parts.path == '/api/favorites':
                 self.reply(200, store.favorites())
-            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile.css', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
-                filename = {'/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
+            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile.css', '/hls.min.js', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
+                filename = {'/hls.min.js': 'hls.min.js', '/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
                 mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'}[Path(filename).suffix]
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:
                 self.reply(404, {'error': 'Niet gevonden.'})
         except (BrokenPipeError, ConnectionResetError):
             return
-        except ValueError:
-            self.reply(400, {'error': 'Ongeldige zoekopdracht.'})
+        except ValueError as error:
+            self.reply(400, {'error': str(error) if parts.path.startswith('/api/mobile/') else 'Ongeldige zoekopdracht.'})
         except Exception:
             self.reply(500, {'error': 'Er ging iets mis bij het lezen. Probeer opnieuw.'})
 
@@ -177,8 +195,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= (MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2):
-                self.reply(413, {'error': 'Upload te groot (maximaal 512 MB M3U).'}); return
+            limit = 16384 if path.startswith('/api/mobile/') else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
+            if not 0 < length <= limit:
+                self.reply(413, {'error': 'Aanvraag te groot.' if path.startswith('/api/mobile/') else 'Upload te groot (maximaal 512 MB M3U).'}); return
             if path == '/api/import/file':
                 self.reply(200, {'ok': True, 'imported': self.server.store.import_file(self.rfile, length)})
                 return
@@ -187,7 +206,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Ongeldige aanvraag.')
             store = self.server.store
             result = {'ok': True}
-            if path == '/api/import/xtream':
+            if path == '/api/mobile/play':
+                result['player'] = self.server.mobile.start(data)
+            elif path == '/api/mobile/pause':
+                result['player'] = self.server.mobile.pause(data.get('token'), data.get('paused'))
+            elif path == '/api/mobile/stop':
+                self.server.mobile.stop(data.get('token'))
+            elif path == '/api/import/xtream':
                 source = xtream_playlist_url(data['server'], data['username'], data['password'])
                 result['imported'] = store.import_url(source)
             elif path == '/api/import':

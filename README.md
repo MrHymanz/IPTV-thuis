@@ -307,9 +307,20 @@ Na het starten van de app wachten automatische EPG-updates, zenderlijstupdates e
 
 ## Browserontwerpen
 
-### Mobiele frontend-mockup
+### Mobiel kijken
 
-Open `/mobile` op het beheeradres, bijvoorbeeld `http://IP-VAN-DOCKER-HOST:8090/mobile`, in Safari op je iPhone. Log in met je bestaande beheeraccount. De mobiele mockup heeft een startscherm, doorzoekbare zenders, opnames, een programmagids en een gesimuleerde speler. De inhoud is voorbeelddata; plannen en afspelen wijzigen geen echte opnames. De speler springt 15 seconden per tik en bij langer vasthouden maximaal 30 seconden per stap. De pagina ondersteunt de veilige schermranden van de iPhone en werkt ook op desktop.
+Open `/mobile` op het beheeradres van je mediacenter in Safari op je iPhone of een actuele Android-browser. Gebruik je bestaande beheerlogin. Buiten je thuisnetwerk verbind je eerst je telefoon met je WireGuard-VPN. De pagina toont echte favorieten en logo's, live-programma's met voortgang, de programmagids, opnames en opslaggegevens.
+
+Mobiel gebruikt automatisch een vrij kijk- of backupaccount. De tv en lopende opnames hebben voorrang; het aparte opnameaccount blijft gereserveerd. Als de tv het mobiele account nodig heeft, probeert mobiel een ander vrij account. Lokale opnames kosten geen providerverbinding. Terugkijken gebruikt voorlopig het oorspronkelijke providerarchief en is alleen beschikbaar als dat kijkaccount vrij is.
+
+Video wordt op het mediacenter omgezet naar HLS met H.264 en AAC. Safari gebruikt de ingebouwde speler; andere geschikte browsers gebruiken de lokaal meegeleverde hls.js. De speler ondersteunt pauzeren, volledig scherm, 15 seconden spoelen en stappen van maximaal 30 seconden bij vasthouden. Een opnamepositie wordt op je telefoon bewaard. Plannen en verwijderen wijzigen nu echte opnames.
+
+Zie [mobiele bediening, accountverdeling en beperkingen](docs/mobile-playback.md). Een fysieke iPhone/Android blijft nodig voor de laatste controle van je eigen browser, hoorbaar geluid en WireGuard-route.
+
+Voorbeeldschermen van de werkende mobiele pagina. De speler toont een gegenereerde testvideo.
+
+<img src="docs/screenshots/mobile-home.png" width="280" alt="Mobiele startpagina met echte interface en voorbeeldgegevens"> <img src="docs/screenshots/mobile-player.png" width="280" alt="Werkende mobiele HLS-speler met testvideo">
+
 
 ### Catch-upmockup in de browser
 

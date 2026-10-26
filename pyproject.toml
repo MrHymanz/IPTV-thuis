@@ -16,4 +16,4 @@ iptv-thuis = "mijntv.__main__:main"
 packages = ["mijntv"]
 
 [tool.setuptools.package-data]
-mijntv = ["web/*.html", "web/*.css", "web/*.js"]
+mijntv = ["web/*.html", "web/*.css", "web/*.js", "web/*.txt"]

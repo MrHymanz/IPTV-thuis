@@ -166,11 +166,15 @@ class Recordings:
             if isinstance(self.required_channel(), dict) or (self.active and not self.store.setting('recording_source')):
                 raise ValueError('Er loopt een opname op dit account. Terugkijken is daarna weer beschikbaar.')
             self.stop_view()
+            if self.streams:
+                self.streams.reserve_account('tv-archive', 'primary')
             self.archive_stop = stop
 
     def release_archive(self):
         with self.lock:
             self.archive_stop = None
+            if self.streams:
+                self.streams.release_account('tv-archive')
 
     def stop_view(self):
         if self.streams:
@@ -451,6 +455,8 @@ class Recordings:
             if slot == 'primary' and self.archive_stop:
                 stop, self.archive_stop = self.archive_stop, None
                 stop()
+                if self.streams:
+                    self.streams.release_account('tv-archive')
             address, _, raw_headers = source['url'].partition('|')
             if self.streams:
                 feed = self.streams.acquire(slot,channel,source,recording=True)

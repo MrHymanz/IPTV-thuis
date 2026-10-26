@@ -50,7 +50,7 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
+        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/hls.min.js', '/api/mobile/status', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
@@ -85,7 +85,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b'<script>', html)
         self.assertIn(b'href="/admin"', html)
 
-    def test_mobile_mockup_is_served(self):
+    def test_mobile_frontend_is_served(self):
         for path in ('/mobile', '/mobile/', '/mobile.js', '/mobile.css'):
             status, body = self.request('GET', path)
             self.assertEqual(status, 200)
@@ -94,6 +94,30 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'viewport-fit=cover', html)
         self.assertIn(b'src="/mobile.js"', html)
         self.assertIn(b'href="/mobile.css"', html)
+
+    def test_mobile_video_and_controls_require_authentication_and_same_origin(self):
+        with patch.object(self.server.mobile,'start',return_value={'token':'session','playlist':'/api/mobile/hls/session/index.m3u8'}) as start:
+            body={'kind':'live','id':'favorite'}
+            self.assertEqual(self.request('POST','/api/mobile/play',body,auth=False)[0],401)
+            self.assertEqual(self.request('POST','/api/mobile/play',body,custom=False)[0],403)
+            self.assertEqual(self.request('POST','/api/mobile/play',body,origin='https://evil.test')[0],403)
+            start.assert_not_called()
+            self.assertEqual(self.request('POST','/api/mobile/play',body)[0],200)
+            start.assert_called_once_with(body)
+        with patch.object(self.server.mobile,'asset',return_value=(b'#EXTM3U','application/vnd.apple.mpegurl')) as asset:
+            self.assertEqual(self.request('GET','/api/mobile/hls/session/index.m3u8',auth=False)[0],401)
+            asset.assert_not_called()
+            self.assertEqual(self.request('GET','/api/mobile/hls/session/index.m3u8'),(200,b'#EXTM3U'))
+            asset.assert_called_once_with('session','index.m3u8')
+
+    def test_mobile_guide_only_returns_programme_metadata(self):
+        with patch.object(self.server.recordings.catchup,'guide',return_value={
+                'days':3,'programmes':[{'start':1,'end':2,'title':'Test','archive':True,
+                                       'url':'https://private.test/secret','stream_id':'internal'}]}):
+            status,body=self.request('GET','/api/mobile/guide?id=one')
+        self.assertEqual(status,200)
+        self.assertNotIn(b'private.test',body)
+        self.assertNotIn(b'internal',body)
 
     def test_catchup_mockup_is_served(self):
         for path in ('/catchup', '/catchup/', '/catchup.js', '/catchup.css', '/catchup-data.js'):
