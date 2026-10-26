@@ -193,6 +193,8 @@ class Store:
             indexed = db.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='channels' AND sql LIKE '%trim(tvg_id)%'").fetchone()
             if not indexed:
                 db.execute('CREATE INDEX IF NOT EXISTS channels_epg_lookup ON channels(trim(tvg_id))')
+            from .backup import BackupAccount
+            BackupAccount.create_tables(db)
             self._merge_favorites(db)
             self._remember_channels(db)
         os.chmod(self.path, 0o600)
@@ -312,7 +314,7 @@ class Store:
         """Recover staging tables after a killed process, before importing starts."""
         with self.import_lock, self.connect() as db:
             names = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                     if re.fullmatch(r'channels_(?:import|previous)_[0-9a-f]{32}', row[0])]
+                     if re.fullmatch(r'(?:channels_(?:import|previous)|backup_import)_[0-9a-f]{32}', row[0])]
             db.execute('PRAGMA synchronous=NORMAL')
             db.execute('PRAGMA secure_delete=OFF')
             db.execute('PRAGMA cache_size=-32768')
@@ -475,10 +477,14 @@ class Store:
 
     def remember_source(self, favorite_id, source_id):
         favorite = next((f for f in self.favorites(playback=True) if f['id'] == favorite_id), None)
-        if not favorite or source_id not in {source['id'] for source in favorite['sources']}:
+        source = next((s for s in (favorite or {}).get('sources', []) if s['id'] == source_id), None)
+        if not source:
             return
         with self.connect(timeout=0) as db:
             db.execute('INSERT OR REPLACE INTO favorite_source VALUES (?,?)', (favorite_id, source_id))
+            if db.execute("SELECT 1 FROM settings WHERE key='backup_source' AND value<>''").fetchone():
+                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',
+                           ('preferred_account', source.get('account', 'primary')))
 
     def favorites(self, playback=False):
         with self.connect() as db:
@@ -496,6 +502,10 @@ class Store:
             for row in db.execute('SELECT favorite_id,channel_id FROM favorite_backups ORDER BY rowid'):
                 pins.setdefault(row['favorite_id'], []).append(row['channel_id'])
             remembered = dict(db.execute('SELECT id,source_id FROM favorite_source').fetchall())
+            from .backup import BackupAccount
+            backup = BackupAccount(self)
+            preferred_account = db.execute("SELECT value FROM settings WHERE key='preferred_account'").fetchone()
+            preferred_account = preferred_account[0] if preferred_account else 'primary'
             result = []
             for row in rows:
                 item = dict(row)
@@ -511,8 +521,15 @@ class Store:
                     if source['url'] and source['url'] not in used:
                         used.add(source['url'])
                         sources.append(source)
+                for source in sources:
+                    source['account'] = 'primary'
+                backup_sources, _ = backup.matches(db, item)
+                for source in backup_sources:
+                    if source['url'] not in used:
+                        used.add(source['url'])
+                        sources.append(source)
                 saved = remembered.get(item['id'])
-                sources.sort(key=lambda source: source['id'] != saved)
+                sources.sort(key=lambda source: (source['account'] != preferred_account, source['id'] != saved))
                 item['available'] = bool(sources)
                 item['source_count'] = len(sources)
                 item['source_groups'] = list(dict.fromkeys(source['group_name'] for source in sources))

@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .store import MAX_PLAYLIST, xtream_playlist_url
+from .backup import BackupAccount
 from .logos import LogoCache
 from .epg import EPG
 from .display import Display
@@ -109,6 +110,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, self.server.recordings.storage())
             elif parts.path == '/api/recordings':
                 self.reply(200, self.server.recordings.list())
+            elif parts.path == '/api/backup-account':
+                self.reply(200, BackupAccount(store).status())
             elif parts.path == '/api/recording-input':
                 self.reply(200,self.server.recordings.input_settings())
             elif parts.path == '/api/guide':
@@ -194,6 +197,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(text, str) or len(text.encode()) > MAX_PLAYLIST:
                         raise ValueError('Ongeldige of te grote M3U.')
                     result['imported'] = store.import_playlist(text)
+            elif path == '/api/backup-account':
+                source = xtream_playlist_url(data['server'], data['username'], data['password']) if data.get('server') else data.get('url', '')
+                result['backup'] = BackupAccount(store).save(source)
+            elif path == '/api/backup-account/refresh':
+                result['backup'] = BackupAccount(store).refresh()
             elif path == '/api/storage':
                 result['storage'] = self.server.recordings.save_storage(data['directory'])
             elif path == '/api/recording-input':

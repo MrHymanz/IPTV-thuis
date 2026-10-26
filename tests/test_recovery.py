@@ -79,6 +79,25 @@ class RecoveryTests(unittest.TestCase):
         self.recover(160)
         self.assertEqual(self.tv.active_source_id,'third')
 
+    def test_other_account_is_tried_before_same_provider_variants(self):
+        self.tv.channels[0]['sources'] = [
+            {'id':'primary','url':'one','account':'primary'},
+            {'id':'same-provider','url':'two','account':'primary'},
+            {'id':'backup:other','url':'three','account':'backup'}]
+        self.tv.active_source_id='primary';self.tv.tried_sources={'primary'}
+        self.recover(100)
+        self.assertEqual(self.tv.active_source_id,'backup:other')
+
+    def test_new_backup_can_be_tried_after_original_retry_budget_exhausted(self):
+        self.tv.channels[0]['sources'] = [
+            {'id':'primary','url':'one','account':'primary'},
+            {'id':'backup:other','url':'two','account':'backup'}]
+        self.tv.active_source_id='primary';self.tv.tried_sources={'primary'}
+        self.tv.recovery_attempts=[0,60,120,180,240,300,360,420]
+        self.recover(480)
+        self.assertEqual(self.tv.active_source_id,'backup:other')
+        self.tv.start_stream.assert_called_once()
+
     def test_actual_start_uses_selected_backup_url(self):
         self.tv.channels[0]['sources']=[{'id':'primary','url':'one'}, {'id':'backup','url':'two'}]
         self.tv.active_source_id='backup';self.tv.tried_sources={'primary'}

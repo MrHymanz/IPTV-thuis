@@ -17,6 +17,7 @@ De app draait zelfstandig met Tk en mpv onder X11. Voor Debian/Ubuntu is een Lin
 - [Programmagids](#programmagids-epg)
 - [Terugkijken op de tv](#terugkijken-op-de-tv)
 - [YouTube cast vanaf je telefoon](#youtube-cast-vanaf-je-telefoon)
+- [Backupaccount voor live-tv](#backupaccount-voor-live-tv)
 - [Opnemen en opslag](#opnemen-met-de-programmagids)
 - [Importgedrag](#importgedrag)
 - [Streambewaking en diagnose](#streambewaking-en-diagnose)
@@ -159,7 +160,7 @@ Een USB 2,4GHz-ontvanger die zich als toetsenbord presenteert kan deze toetsen r
 
 ## Beheer en gegevens
 
-De beheerpagina is verdeeld in zes openklapbare onderdelen: IPTV-gegevens, Zenders en favorieten, Beeldinstellingen, Opnames, Opslag en Opnameaccount. Er staat één onderdeel tegelijk open; de browser onthoudt de laatst geopende sectie. Lange zender- en opnamelijsten hebben een eigen scrollvak. Bij het slepen van favorieten scrollt de lijst mee.
+De beheerpagina is verdeeld in zeven openklapbare onderdelen: IPTV-gegevens, Backupaccount, Zenders en favorieten, Beeldinstellingen, Opnames, Opslag en Opnameaccount. Er staat één onderdeel tegelijk open; de browser onthoudt de laatst geopende sectie. Lange zender- en opnamelijsten hebben een eigen scrollvak. Bij het slepen van favorieten scrollt de lijst mee.
 
 De beheerbackend gebruikt alleen de Python-standaardbibliotheek. De tv-interface gebruikt Tk en Pillow voor zenderlogo’s; het Linux-installatiescript en de LibreELEC-tv-container installeren die onderdelen. Standaard staat alle configuratie in `~/.local/share/iptv-thuis/`, buiten de repository:
 
@@ -244,6 +245,18 @@ Verschijnt de ontvanger niet automatisch? Kies op de tv **Menu → YouTube cast*
 Dit is een YouTube-ontvanger via DIAL en YouTube Lounge, geen algemene Chromecast- of AirPlay-ontvanger. Andere apps zoals Netflix vallen hier niet onder. Video’s waarvoor YouTube aanmelding of aanvullende verificatie vereist kunnen niet altijd worden afgespeeld. De ontvanger controleert of de gekozen mediastream bereikbaar is en verzorgt de door YouTube gevraagde verificatie met een lokale tokenprovider. De integratie gebruikt [yt-cast-receiver](https://github.com/patrickkfkan/yt-cast-receiver) en yt-dlp; wijzigingen bij YouTube kunnen updates noodzakelijk maken. Het verschijnen en bedienen vanaf jouw specifieke telefoon vraagt een controle in de echte YouTube-app.
 
 De gewone Docker-webpreview ontvangt geen casts. Voor een Debian/Ubuntu-desktop zijn de optionele ontvangerafhankelijkheden apart nodig; zie [de ontvangerconfiguratie](deploy/libreelec/youtube/README.md).
+
+## Backupaccount voor live-tv
+
+Open **Backupaccount** in het webbeheer en vul de Xtream-inloggegevens of M3U-URL van een ander kijkaccount in. De backuplijst wordt apart opgeslagen: je oorspronkelijke account, favorieten, namen, volgorde en programmagids blijven behouden. Als de provider M3U-downloads weigert maar Xtream wel ondersteunt, haalt de app de live-zenders via de Xtream-API op. Het overzicht toont welke favorieten een match hebben en welke nog ontbreken. Nieuwe favorieten worden automatisch met de bewaarde backuplijst vergeleken.
+
+Matching gebruikt eerst dezelfde EPG-identiteit en anders een genormaliseerde zendernaam binnen hetzelfde land. HD/FHD/UHD-varianten mogen verschillen. Dubbelzinnige namen worden overgeslagen. Een vermelding als match betekent dat de zender in de lijst staat; de werkelijke stream wordt bij afspelen gecontroleerd.
+
+Bij uitval probeert de tv het andere account vóór verdere varianten op dezelfde provider. Na minimaal 30 seconden stabiel, voortgaand beeld met werkende audio-uitvoer wordt dat account de voorkeur voor de volgende zenders en na een herstart. Bij een latere storing kan het oorspronkelijke account opnieuw overnemen. Ontbreekt een favoriet in het voorkeursaccount, dan blijven de beschikbare bronnen van het andere account bruikbaar. Er worden geen extra streams tegelijk geopend om accounts te testen.
+
+De backuplijst wordt onafhankelijk van de oorspronkelijke provider elke zes uur vernieuwd. Een mislukte import of een update die meer dan de helft van de bestaande matches verliest, behoudt de vorige lijst. Verwijderen van het backupaccount herstelt de voorkeur voor het oorspronkelijke account en behoudt je favorieten.
+
+Een lopende opname blijft zijn bron delen met de speler; zappen of failover onderbreekt die opname niet. Bestaand opnameherstel kan een nieuw deel op een andere gekoppelde bron starten. Een afzonderlijk **Opnameaccount** en het providerarchief voor **Terugkijken** gebruiken hun eigen configuratie. Gebruik het backupaccount niet ook als afzonderlijk opnameaccount.
 
 ## Opnemen met de programmagids
 

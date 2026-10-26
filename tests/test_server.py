@@ -2,6 +2,7 @@ import base64
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import io
 from pathlib import Path
 import tempfile
 import threading
@@ -49,10 +50,30 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
+        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
+
+    def test_backup_account_setup_status_refresh_and_remove(self):
+        playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="npo1" group-title="NL| TV",NL| NPO 1 HD\nhttps://backup.test/private-stream\n'
+        self.store.import_playlist(playlist.replace('backup.test', 'primary.test'))
+        self.store.add_favorite(self.store.catalog()['items'][0]['id'])
+        with patch('mijntv.backup.fetch_playlist', side_effect=lambda *a, **kw: io.StringIO(playlist)):
+            status, body = self.request('POST', '/api/backup-account',
+                                        {'server':'https://backup.test','username':'private-user','password':'private-password'})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['backup']['matched'], 1)
+            status, body = self.request('POST', '/api/backup-account/refresh', {})
+            self.assertEqual(status, 200)
+        status, body = self.request('GET', '/api/backup-account')
+        self.assertEqual(status, 200)
+        self.assertNotIn(b'private-user', body)
+        self.assertNotIn(b'private-password', body)
+        self.assertNotIn(b'private-stream', body)
+        self.assertEqual(self.request('POST','/api/backup-account',{'url':''})[0],200)
+        self.assertFalse(json.loads(self.request('GET','/api/backup-account')[1])['configured'])
+        self.assertEqual(len(self.store.favorites()), 1)
 
     def test_tv_preview_is_served_with_external_scripts(self):
         for path in ('/tv', '/tv/', '/tv.js', '/tv.css'):

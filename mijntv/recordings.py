@@ -75,8 +75,10 @@ class Recordings:
             p=urlsplit(address); q=parse_qs(p.query)
             return (p.hostname,p.port,q.get('username',[p.username])[-1])
         primary=self.store.setting('source')
-        if source==primary or (identity(source)[2] and identity(source)==identity(primary)):
-            raise ValueError('Gebruik een tweede account, niet hetzelfde account als voor live-tv.')
+        backup=self.store.setting('backup_source')
+        if any(source==other or (identity(source)[2] and identity(source)==identity(other))
+               for other in (primary,backup) if other):
+            raise ValueError('Gebruik een tweede account, niet hetzelfde account als voor live-tv of de backup.')
         self._import_input(source)
         return self.input_settings()
 

@@ -10,6 +10,7 @@ import time
 from .server import AdminServer, credentials
 from .maintenance import BACKGROUND_STARTUP_DELAY
 from .store import Store
+from .backup import BackupAccount
 from .diagnostics import configure_logging
 
 
@@ -94,6 +95,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=refresh_loop, args=(store, stop), daemon=True).start()
+    threading.Thread(target=BackupAccount(store).run, args=(stop,), daemon=True).start()
     threading.Thread(target=server.epg.run, args=(stop,), daemon=True).start()
     recorder_thread = threading.Thread(target=server.recordings.run, args=(stop,), daemon=True)
     recorder_thread.start()

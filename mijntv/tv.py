@@ -1162,6 +1162,8 @@ class TV:
                 # Keep the current screen's cached sources in the same order as the database.
                 channel['sources'].sort(key=lambda source: source['id'] != source_id)
                 self.remembered_source = (channel['id'], source_id)
+                self.tried_sources = {source_id}
+                self.recovery_attempts = []
                 logging.getLogger('mijntv.stream').info('stream_preferred source_id=%s', source_id)
 
     def recover_stream(self, reason, snapshot=None):
@@ -1193,13 +1195,19 @@ class TV:
             return
         log = logging.getLogger('mijntv.stream')
         log.info('stream_fault reason=%s channel_index=%s snapshot=%s', reason, self.selected, snapshot)
-        if len(self.recovery_attempts) >= max(3, min(8, len(self.channels[self.selected].get('sources', [])))):
-            self.show_error('De uitzending blijft onderbroken. Kies een andere zender of druk op Terug.')
-            return
         self.recovery_pending = None
         sources = self.channels[self.selected].get('sources') or [self.channels[self.selected]]
         tried = getattr(self, 'tried_sources', set())
-        alternative = next((source for source in sources if source.get('id') and source['id'] not in tried), None)
+        active = next((s for s in sources if s.get('id') == getattr(self, 'active_source_id', None)), {})
+        untried = [s for s in sources if s.get('id') and s['id'] not in tried]
+        # Try the other account before cycling through variants on a failed provider.
+        alternative = next((s for s in untried if s.get('account', 'primary') != active.get('account', 'primary')),
+                           untried[0] if untried else None)
+        other_account = alternative and alternative.get('account', 'primary') != active.get('account', 'primary')
+        if len(self.recovery_attempts) >= max(3, min(8, len(sources))) and not other_account:
+            self.show_error('De uitzending blijft onderbroken. Kies een andere zender of druk op Terug.')
+            self.recovery_pending = (reason, snapshot)
+            return
         self.recovery_attempts.append(now)
         if alternative:
             self.active_source_id = alternative['id']
@@ -1243,7 +1251,9 @@ class TV:
             self.open_panel('guide')
             self.show_error('Terugkijken gestopt: een geplande opname is gestart.')
             self.root.after(5000, self.error.place_forget)
-        if self.recovery_pending and self.watching and time.monotonic()-self.recovery_attempts[-1] >= 60:
+        if (self.recovery_pending and self.watching
+                and time.monotonic()-max(self.recovery_attempts[-1], getattr(self, 'recovery_checked_at', 0)) >= 60):
+            self.recovery_checked_at = time.monotonic()
             reason, snapshot = self.recovery_pending
             self.recovery_pending = None
             self.recover_stream(reason, snapshot)

@@ -112,6 +112,7 @@ function startFavoriteDrag(event, row, handle) {
 }
 async function load() {
   await loadDisplay();
+  await loadBackup();
   await loadRecordings();
   const [status, list, groups] = await Promise.all([api('/api/status'), api('/api/favorites'), api('/api/groups')]);
   favorites = list; $('stats').textContent = `${status.channels.toLocaleString('nl-NL')} zenders · ${status.favorites} favorieten`; $('refresh').disabled = !status.has_source;
@@ -246,3 +247,36 @@ function scheduleOverscan() {
 for (const id of ['overscan-x', 'overscan-y']) $(id).addEventListener('input', scheduleOverscan);
 $('overscan-form').onsubmit = event => { event.preventDefault(); scheduleOverscan(); };
 $('overscan-reset').onclick = () => { $('overscan-x').value = 0; $('overscan-y').value = 0; scheduleOverscan(); };
+
+async function loadBackup() {
+  const backup = await api('/api/backup-account');
+  $('backup-status').textContent = backup.configured
+    ? `Backupaccount ingesteld · ${backup.matched} van ${backup.total} favorieten gematcht · voorkeur: ${backup.preferred === 'backup' ? 'backupaccount' : 'oorspronkelijk account'}. ${backup.error || ''}`
+    : 'Nog geen backupaccount ingesteld. Je huidige account en favorieten blijven behouden.';
+  $('backup-refresh').disabled = !backup.configured;
+  $('backup-remove').disabled = !backup.configured;
+  $('backup-matches').replaceChildren();
+  if (backup.configured) for (const item of backup.matches) {
+    const row = document.createElement('div'); row.className = 'row';
+    row.append(title(item.label, item.matched
+      ? `${item.source} · ${item.sources} bron(nen) · match op ${item.method === 'epg' ? 'EPG-identiteit' : 'zendernaam'}`
+      : 'Geen zekere match: deze favoriet blijft het oorspronkelijke account gebruiken.'));
+    $('backup-matches').append(row);
+  }
+}
+$('backup-form').onsubmit = async event => {
+  event.preventDefault();
+  await mutate('/api/backup-account', {server:$('backup-server').value.trim(),
+    username:$('backup-user').value, password:$('backup-password').value}, 'Backupaccount opgeslagen en favorieten gematcht.');
+  $('backup-password').value = '';
+};
+$('backup-url-form').onsubmit = async event => {
+  event.preventDefault();
+  const url = $('backup-url').value.trim(); $('backup-url').value = '';
+  await mutate('/api/backup-account', {url}, 'Backupaccount opgeslagen en favorieten gematcht.');
+};
+$('backup-refresh').onclick = () => mutate('/api/backup-account/refresh', {}, 'Backuplijst vernieuwd en favorieten opnieuw gematcht.');
+$('backup-remove').onclick = () => {
+  if (confirm('Backupaccount verwijderen? Je oorspronkelijke account en favorieten blijven behouden.'))
+    mutate('/api/backup-account', {url:''}, 'Backupaccount verwijderd.');
+};
