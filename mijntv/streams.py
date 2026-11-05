@@ -34,6 +34,7 @@ class Feed:
         self.response = None
         self.process = None
         self.bytes_read = 0
+        self.created_at = time.monotonic()
         self.last_data = time.monotonic()
 
     def subscribe(self):
@@ -59,6 +60,11 @@ class Feed:
         with self.lock:
             if self.closed:
                 return
+            if not self.bytes_read:
+                logging.getLogger('mijntv.stream').info(
+                    'stream_first_data channel_id=%s source_id=%s account=%s wait_seconds=%.2f',
+                    self.channel['id'], self.source['id'],
+                    self.source.get('account', 'primary'), time.monotonic()-self.created_at)
             self.bytes_read += len(chunk)
             self.last_data = time.monotonic()
             self.recent.append(chunk)
@@ -148,8 +154,9 @@ class Feed:
             if self.closed:
                 return
             self.closed = True
-            logging.getLogger('mijntv.stream').info('stream_feed_end source_id=%s reason=%s bytes=%s idle_seconds=%.1f',
-                self.source['id'],reason,self.bytes_read,time.monotonic()-self.last_data)
+            logging.getLogger('mijntv.stream').info('stream_feed_end channel_id=%s source_id=%s account=%s reason=%s bytes=%s duration_seconds=%.1f idle_seconds=%.1f',
+                self.channel['id'], self.source['id'], self.source.get('account', 'primary'),
+                reason, self.bytes_read, time.monotonic()-self.created_at, time.monotonic()-self.last_data)
             for consumer in self.consumers:
                 if consumer.full():
                     try:

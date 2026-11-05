@@ -1,6 +1,7 @@
 """Bounded, credential-free stream diagnostics and stall detection."""
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
+import time
 from pathlib import Path
 
 PROPERTIES = ('aid', 'duration', 'time-pos', 'pause', 'core-idle', 'seeking', 'paused-for-cache',
@@ -29,12 +30,34 @@ def safe_snapshot(values):
     return result
 
 
+class RepeatedPlayerErrors(logging.Filter):
+    """Keep the first category error and a per-minute count, never raw text."""
+    def __init__(self):
+        super().__init__()
+        self.categories = {}
+
+    def filter(self, record):
+        if record.msg != 'player_error category=%s':
+            return True
+        category = record.args[0]
+        now = time.monotonic()
+        previous, suppressed = self.categories.get(category, (None, 0))
+        if previous is not None and now-previous < 60:
+            self.categories[category] = (previous, suppressed+1)
+            return False
+        self.categories[category] = (now, 0)
+        record.msg = 'player_error category=%s repeated_since_previous=%s'
+        record.args = (category, suppressed)
+        return True
+
+
 def configure_logging(directory):
     logger = logging.getLogger('mijntv.stream')
     if not logger.handlers:
-        handler = RotatingFileHandler(Path(directory)/'stream-diagnostics.log',
-                                      maxBytes=1_000_000, backupCount=2)
-        handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+        handler = TimedRotatingFileHandler(Path(directory)/'stream-diagnostics.log',
+                                           when='midnight', backupCount=14, encoding='utf-8', delay=True)
+        handler.addFilter(RepeatedPlayerErrors())
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False

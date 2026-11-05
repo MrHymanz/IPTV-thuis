@@ -98,3 +98,40 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(events[0]['category'],'network')
         finally:
             left.close();right.close()
+
+class LoggingRetentionTests(unittest.TestCase):
+    def test_repeated_errors_are_counted_and_categories_stay_separate(self):
+        import logging
+        from unittest.mock import patch
+        from mijntv.diagnostics import RepeatedPlayerErrors
+        limiter = RepeatedPlayerErrors()
+        def record(category):
+            return logging.LogRecord('test', logging.INFO, '', 0,
+                                     'player_error category=%s', (category,), None)
+        with patch('mijntv.diagnostics.time.monotonic', side_effect=[0, 5, 10, 61]):
+            self.assertTrue(limiter.filter(record('player')))
+            self.assertFalse(limiter.filter(record('player')))
+            self.assertTrue(limiter.filter(record('network')))
+            summary = record('player')
+            self.assertTrue(limiter.filter(summary))
+            self.assertIn('repeated_since_previous=1', summary.getMessage())
+
+    def test_daily_rotation_keeps_fourteen_backups(self):
+        import logging
+        from logging.handlers import TimedRotatingFileHandler
+        logger = logging.getLogger('mijntv.stream')
+        previous = logger.handlers[:]
+        logger.handlers = []
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                configure_logging(directory)
+                handler = logger.handlers[0]
+                self.assertIsInstance(handler, TimedRotatingFileHandler)
+                self.assertEqual(handler.backupCount, 14)
+                self.assertEqual(handler.when, 'MIDNIGHT')
+                logger.info('stream_fault reason=stalled')
+                handler.doRollover()
+                self.assertEqual(len(list(Path(directory).glob('stream-diagnostics.log.*'))), 1)
+                handler.close()
+        finally:
+            logger.handlers = previous
