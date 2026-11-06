@@ -1,0 +1,13 @@
+[Unit]
+Description=IPTV network and VPN diagnostics
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /storage/iptv-thuis/network-monitor.py --data-dir /storage/iptv-thuis/data
+Restart=on-failure
+RestartSec=10
+UMask=0077
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
