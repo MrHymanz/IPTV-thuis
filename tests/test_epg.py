@@ -35,6 +35,16 @@ class EPGTests(unittest.TestCase):
         stop.wait.assert_called_once_with(180)
         configuration.assert_not_called()
 
+    def test_background_fills_missing_live_guide_without_opening_catchup(self):
+        from unittest.mock import Mock
+        stop = Mock()
+        stop.wait.side_effect = [False, True]
+        stop.is_set.return_value = False
+        with patch.object(self.epg, 'configuration', return_value=('', set(), '')), \
+                patch('mijntv.catchup.Catchup.guide') as guide:
+            self.epg.run(stop)
+        guide.assert_called_once_with(self.channel)
+
     def test_epg_lookup_uses_saved_favorite_ids_without_catalog_scan(self):
         from unittest.mock import Mock
         probe=Mock();probe.execute.return_value=[]

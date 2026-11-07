@@ -60,6 +60,26 @@ class CatchupTests(unittest.TestCase):
         self.catchup.guide(self.channel)
         self.assertEqual(self.calls,[None,'get_live_streams','get_simple_data_table'])
 
+    def test_live_info_uses_provider_guide_when_xmltv_is_missing(self):
+        self.entries.append(self.programme(self.now-60, self.now+1800, '24Kitchen nu'))
+        self.catchup.guide(self.channel)
+        guide = self.store.programmes(self.now)[self.channel]
+        self.assertEqual(guide['now']['title'], '24Kitchen nu')
+        self.assertEqual(guide['next']['title'], 'Morgen')
+        self.assertEqual(self.store.favorites()[0]['epg']['now']['title'], '24Kitchen nu')
+        self.assertEqual(len(self.calls), 3)
+        self.store.set_setting('source', SOURCE.replace('fake%2Bpass', 'different'))
+        self.assertIsNone(self.store.programmes(self.now)[self.channel]['now'])
+
+    def test_live_info_preserves_current_xmltv_and_expires_provider_cache(self):
+        self.entries.append(self.programme(self.now-60, self.now+1800, 'Provider'))
+        self.catchup.guide(self.channel)
+        with self.store.connect() as db:
+            db.execute('INSERT INTO epg_programmes VALUES (?,?,?,?)',
+                       ('two.nl', self.now-60, self.now+900, 'XMLTV'))
+        self.assertEqual(self.store.programmes(self.now)[self.channel]['now']['title'], 'XMLTV')
+        self.assertEqual(self.store.programmes(self.now+6000)[self.channel], {'now': None, 'next': None})
+
     def test_playback_url_uses_archive_variant_and_encoded_credentials(self):
         item=self.catchup.guide(self.channel)['programmes'][0]
         url=urlsplit(self.catchup.playback_url(self.channel,item['start']))

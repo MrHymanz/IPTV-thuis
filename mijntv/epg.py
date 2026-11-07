@@ -151,9 +151,13 @@ class EPG:
             self.lock.release()
 
     def run(self, stop):
+        from .catchup import Catchup
         if stop.wait(BACKGROUND_STARTUP_DELAY):
             return
+        catchup = Catchup(self.store)
+        fallback_at = 0
         while not stop.is_set():
+            retry_seconds = 60
             try:
                 url, ids, signature = self.configuration()
                 refreshed = float(self.store.setting('epg_refreshed_at', '0'))
@@ -162,7 +166,18 @@ class EPG:
                     self.refresh()
             except Exception:
                 print('EPG vernieuwen mislukt; bestaande programmagegevens blijven bewaard.', flush=True)
-                if stop.wait(600):
-                    return
-            if stop.wait(60):
+                retry_seconds = 600
+            # A partial XMLTV feed must not leave a favourite blank when the
+            # same provider offers a usable per-stream programme guide.
+            if time.time()-fallback_at >= 15*60:
+                fallback_at = time.time()
+                for channel_id, programme in self.store.programmes().items():
+                    if stop.is_set():
+                        return
+                    if programme['now'] is None:
+                        try:
+                            catchup.guide(channel_id)
+                        except Exception:
+                            pass
+            if stop.wait(retry_seconds):
                 return

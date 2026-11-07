@@ -572,6 +572,22 @@ class Store:
                     item = result.setdefault(row['id'], {'now': None, 'next': None})
                     if row['title'] is not None:
                         item[kind] = {'start': row['start'], 'end': row['end'], 'title': row['title']}
+            # The provider's per-stream guide can be complete where XMLTV is not.
+            # Read its cache only: rendering favourites must never do network I/O.
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='catchup_programmes'").fetchone():
+                source = db.execute("SELECT value FROM settings WHERE key='source'").fetchone()
+                signature = hashlib.sha256((source[0] if source else '').encode()).hexdigest()
+                for channel_id, item in result.items():
+                    if item['now'] is not None:
+                        continue
+                    rows = db.execute('''SELECT start,end,title FROM catchup_programmes
+                        WHERE signature=? AND channel_id=? AND end>? ORDER BY start''',
+                        (signature, channel_id, now)).fetchall()
+                    current = next((row for row in reversed(rows) if row['start'] <= now), None)
+                    upcoming = next((row for row in rows if row['start'] > now), None)
+                    if current is not None:
+                        item['now'] = dict(current)
+                        item['next'] = dict(upcoming) if upcoming else None
         return result
 
     def add_favorite(self, channel_id, label=''):
