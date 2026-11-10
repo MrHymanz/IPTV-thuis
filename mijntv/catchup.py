@@ -8,12 +8,22 @@ import re
 import threading
 import time
 import unicodedata
+import socket
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MAX_RESPONSE = 64 * 1024 * 1024
+
+
+class ProviderRequestError(ValueError):
+    """Safe failure reason, without the credential-bearing request URL."""
+
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
 
 
 def text(value, limit=6000):
@@ -88,13 +98,26 @@ class Catchup:
         address = urlunsplit((parsed.scheme, parsed.netloc,
                               parsed.path.rsplit('/', 1)[0]+'/player_api.php', urlencode(query), ''))
         try:
-            with urlopen(Request(address, headers={'User-Agent': 'Mozilla/5.0'}), timeout=20) as response:
+            with urlopen(Request(address, headers={'User-Agent': 'Mozilla/5.0', 'Accept-Encoding': 'identity'}), timeout=20) as response:
                 data = response.read(MAX_RESPONSE+1)
             if len(data) > MAX_RESPONSE:
-                raise ValueError()
-            return json.loads(data)
+                raise ProviderRequestError('too_large', 'De providerlijst is te groot om in één keer op te halen.')
+            try:
+                return json.loads(data)
+            except (ValueError, UnicodeError):
+                raise ProviderRequestError('invalid_response', 'De provider stuurde geen geldige programmagegevens terug.') from None
+        except ProviderRequestError:
+            raise
+        except HTTPError as error:
+            raise ProviderRequestError('http', f'De provider weigert de aanvraag (HTTP {error.code}). Probeer het later opnieuw.') from None
+        except (TimeoutError, socket.timeout):
+            raise ProviderRequestError('timeout', 'De provider reageerde niet binnen twintig seconden. Probeer het later opnieuw.') from None
+        except URLError as error:
+            if isinstance(error.reason, (TimeoutError, socket.timeout)):
+                raise ProviderRequestError('timeout', 'De provider reageerde niet binnen twintig seconden. Probeer het later opnieuw.') from None
+            raise ProviderRequestError('connection', 'De verbinding met de provider kon niet worden gemaakt. Probeer het later opnieuw.') from None
         except Exception:
-            raise ValueError('De provider kon niet worden bereikt. Probeer het later opnieuw.') from None
+            raise ProviderRequestError('request', 'De provideraanvraag is mislukt. Probeer het later opnieuw.') from None
 
     def metadata(self, signature):
         with self.store.connect() as db:

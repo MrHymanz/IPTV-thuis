@@ -7,7 +7,7 @@ import threading
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from .catchup import Catchup
+from .catchup import Catchup, ProviderRequestError
 
 REFRESH_SECONDS = 6 * 3600
 PAGE_SIZE = 60
@@ -91,20 +91,51 @@ class VOD:
         if self.provider.configuration() != configuration:
             raise ValueError('De providerinstellingen zijn gewijzigd. Open het aanbod opnieuw.')
 
-    def _refresh(self, configuration, kind):
-        signature = configuration[2]
+    def _save_categories(self, configuration, kind, categories):
+        self.check(configuration)
+        rows = [(configuration[2], kind, str(c['category_id']), clean(c.get('category_name'), 300))
+                for c in categories if isinstance(c, dict) and c.get('category_id') is not None]
         with self.store.connect() as db:
-            row = db.execute('SELECT updated FROM vod_meta WHERE signature=? AND kind=?', (signature, kind)).fetchone()
+            db.execute('DELETE FROM vod_categories WHERE signature=? AND kind=?', (configuration[2], kind))
+            db.executemany('INSERT OR REPLACE INTO vod_categories VALUES (?,?,?,?)', rows)
+        return rows
+
+    def _refresh(self, configuration, kind, category=''):
+        signature = configuration[2]
+        scope = kind+':category:'+category if category else kind
+        with self.store.connect() as db:
+            full = db.execute('SELECT updated FROM vod_meta WHERE signature=? AND kind=?', (signature, kind)).fetchone()
+            mode = db.execute('SELECT updated FROM vod_meta WHERE signature=? AND kind=?', (signature, kind+':category-mode')).fetchone()
+            row = db.execute('SELECT updated FROM vod_meta WHERE signature=? AND kind=?', (signature, scope)).fetchone()
+        if full and time.time()-full[0] < REFRESH_SECONDS:
+            return '', False
+        if not category and mode and time.time()-mode[0] < REFRESH_SECONDS:
+            return 'Het volledige aanbod kon niet worden opgehaald. Kies een bron of categorie om de titels afzonderlijk te laden.', True
         if row and time.time()-row[0] < REFRESH_SECONDS:
-            return ''
-        if row and self.failed.get((signature, kind), 0) > time.monotonic():
-            return 'Vernieuwen is niet gelukt. Je ziet het eerder opgehaalde aanbod.'
+            return '', False
+        if row and self.failed.get((signature, scope), 0) > time.monotonic():
+            return 'Vernieuwen is niet gelukt. Je ziet het eerder opgehaalde aanbod.', False
         try:
             category_action = 'get_vod_categories' if kind == 'movie' else 'get_series_categories'
             item_action = 'get_vod_streams' if kind == 'movie' else 'get_series'
-            categories = self.provider.request(configuration, category_action)
-            items = self.provider.request(configuration, item_action)
-            if not isinstance(categories, list) or not isinstance(items, list):
+            with self.store.connect() as db:
+                known = [dict(row) for row in db.execute('SELECT id AS category_id,name AS category_name FROM vod_categories WHERE signature=? AND kind=?', (signature, kind))]
+            categories = known if category and mode and known else self.provider.request(configuration, category_action)
+            if not isinstance(categories, list):
+                raise ValueError('De provider stuurde geen bruikbare categorieën.')
+            if category and not any(str(c.get('category_id')) == category for c in categories if isinstance(c, dict)):
+                raise ValueError('Deze categorie is niet meer beschikbaar. Open het aanbod opnieuw.')
+            try:
+                items = self.provider.request(configuration, item_action, **({'category_id': category} if category else {}))
+            except ProviderRequestError as error:
+                if category or row or not categories:
+                    raise
+                if not self._save_categories(configuration, kind, categories):
+                    raise
+                with self.store.connect() as db:
+                    db.execute('INSERT OR REPLACE INTO vod_meta VALUES (?,?,?)', (signature, kind+':category-mode', time.time()))
+                return str(error)+' Kies een bron of categorie om de titels afzonderlijk te laden.', True
+            if not isinstance(items, list):
                 raise ValueError('De provider stuurde geen bruikbaar film- of serieaanbod.')
             rows = {}
             for item in items:
@@ -114,13 +145,17 @@ class VOD:
                     key = identifier(item.get('stream_id' if kind == 'movie' else 'series_id'))
                 except ValueError:
                     continue
+                # Some panels ignore category_id and send the whole catalogue.
+                # Never put unrelated titles into a selected category.
+                if category and str(item.get('category_id') or category) != category:
+                    continue
                 title = clean(item.get('name'), 500)
                 if not title:
                     continue
-                data = {'id': key, 'kind': kind, 'title': title, 'category': str(item.get('category_id') or ''),
+                data = {'id': key, 'kind': kind, 'title': title, 'category': str(item.get('category_id') or category),
                         'year': clean(item.get('year') or str(item.get('releaseDate') or item.get('release_date') or '')[:4], 10),
                         'rating': clean(item.get('rating'), 10)}
-                rows[key] = (signature, kind, key, str(item.get('category_id') or ''), title, title.casefold(),
+                rows[key] = (signature, kind, key, str(item.get('category_id') or category), title, title.casefold(),
                              cover(item.get('stream_icon') if kind == 'movie' else item.get('cover')),
                              extension(item.get('container_extension')), json.dumps(data))
             if items and not rows:
@@ -128,22 +163,26 @@ class VOD:
             catrows = [(signature, kind, str(c['category_id']), clean(c.get('category_name'), 300))
                        for c in categories if isinstance(c, dict) and c.get('category_id') is not None]
             self.check(configuration)
-            self.failed.pop((signature, kind), None)
+            self.failed.pop((signature, scope), None)
             with self.store.connect() as db:
                 for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details'):
                     db.execute('DELETE FROM '+table+' WHERE signature<>?', (signature,))
-                db.execute('DELETE FROM vod_items WHERE signature=? AND kind=?', (signature, kind))
+                if category:
+                    db.execute('DELETE FROM vod_items WHERE signature=? AND kind=? AND category=?', (signature, kind, category))
+                else:
+                    db.execute('DELETE FROM vod_items WHERE signature=? AND kind=?', (signature, kind))
+                    db.execute('DELETE FROM vod_meta WHERE signature=? AND kind=?', (signature, kind+':category-mode'))
                 db.execute('DELETE FROM vod_categories WHERE signature=? AND kind=?', (signature, kind))
-                db.executemany('INSERT INTO vod_items VALUES (?,?,?,?,?,?,?,?,?)', rows.values())
+                db.executemany('INSERT OR REPLACE INTO vod_items VALUES (?,?,?,?,?,?,?,?,?)', rows.values())
                 db.executemany('INSERT OR REPLACE INTO vod_categories VALUES (?,?,?,?)', catrows)
-                db.execute('INSERT OR REPLACE INTO vod_meta VALUES (?,?,?)', (signature, kind, time.time()))
-            return ''
+                db.execute('INSERT OR REPLACE INTO vod_meta VALUES (?,?,?)', (signature, scope, time.time()))
+            return '', False
         except ValueError:
             if not row:
                 raise
             self.check(configuration)
-            self.failed[(signature, kind)] = time.monotonic() + 60
-            return 'Vernieuwen is niet gelukt. Je ziet het eerder opgehaalde aanbod.'
+            self.failed[(signature, scope)] = time.monotonic() + 60
+            return 'Vernieuwen is niet gelukt. Je ziet het eerder opgehaalde aanbod.', False
 
     @staticmethod
     def public(row):
@@ -157,9 +196,11 @@ class VOD:
         configuration = self.configuration()
         offset = max(0, int(offset))
         with self.lock:
-            notice = self._refresh(configuration, kind)
+            notice, requires_category = self._refresh(configuration, kind, str(category))
             self.check(configuration)
             where, args = 'signature=? AND kind=?', [configuration[2], kind]
+            if requires_category:
+                where += ' AND 0'
             if category:
                 where += ' AND category=?'
                 args.append(str(category))
@@ -172,7 +213,7 @@ class VOD:
                 rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY title COLLATE NOCASE,id LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
             return {'items': [self.public(row) for row in rows], 'categories': categories,
                     'total': total, 'offset': offset, 'limit': PAGE_SIZE, 'notice': notice,
-                    'signature': configuration[2][:16]}
+                    'signature': configuration[2][:16], 'requires_category': requires_category}
 
     def _item(self, configuration, kind, key):
         with self.store.connect() as db:

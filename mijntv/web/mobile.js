@@ -152,7 +152,7 @@ function openProgramme(p) {
 }
 // Films and series use separate server catalogues and category IDs.
 let vodKind='movie', vodItems=[], vodTotal=0, vodSignature='', vodGeneration=0, vodDetailGeneration=0;
-let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false;
+let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false;
 const vodState={movie:{category:'',query:''},series:{category:'',query:''}};
 function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
@@ -175,8 +175,8 @@ function renderVod() {
   const q=vodState[vodKind].query.toLocaleLowerCase('nl-NL').trim();
   const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&i.title.toLocaleLowerCase('nl-NL').includes(q));
   $('vod-list').replaceChildren(...shown.map(vodCard));
-  if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
-  $('vod-count').textContent=(vodFilter==='all'?vodTotal:shown.length)+' titels';
+  if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':vodRequiresCategory?'Kies hierboven een bron of categorie. We halen het aanbod per categorie op.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
+  $('vod-count').textContent=vodFilter==='all'&&vodRequiresCategory?'':(vodFilter==='all'?vodTotal:shown.length)+' titels';
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
   $('vod-more').hidden=vodFilter!=='all'||vodItems.length>=vodTotal;
   $('vod-featured').hidden=vodFilter!=='all'||!shown.length||!!q||!!vodState[vodKind].category;
@@ -191,11 +191,11 @@ async function loadVod(append=false) {
   try {
     const result=await api('/api/mobile/vod?'+params);if(generation!==vodGeneration)return;
     if(append&&vodSignature&&vodSignature!==result.signature){vodItems=[];vodTotal=0;throw Error('Je provideraccount is gewijzigd. Open het aanbod opnieuw.');}
-    vodSignature=result.signature;vodItems=append?vodItems.concat(result.items):result.items;vodTotal=result.total;
-    const categories=[new Option('Alle categorieën',''),...result.categories.map(c=>new Option(c.name,c.id))];
+    vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?vodItems.concat(result.items):result.items;vodTotal=result.total;
+    const categories=[new Option(result.requires_category?'Kies een categorie':'Alle categorieën',''),...result.categories.map(c=>new Option(c.name,c.id))];
     if(state.category&&!result.categories.some(c=>c.id===state.category))categories.push(new Option('Eerdere categorie',state.category));
     $('vod-category').replaceChildren(...categories);$('vod-category').value=state.category;$('vod-notice').textContent=result.notice||'';renderVod();
-  }catch(error){if(generation!==vodGeneration)return;$('vod-notice').textContent=error.message;$('vod-retry').hidden=false;if(!append)$('vod-list').replaceChildren(element('p','empty','Het aanbod is nu niet beschikbaar. Probeer het opnieuw of controleer je Xtream-login in het beheer.'));}
+  }catch(error){if(generation!==vodGeneration)return;$('vod-notice').textContent=error.message;$('vod-retry').hidden=false;if(!append)$('vod-list').replaceChildren(element('p','empty',error.message));}
   finally{if(generation===vodGeneration){vodLoading=false;$('vod-more').disabled=false;}}
 }
 function enterVod(kind) {

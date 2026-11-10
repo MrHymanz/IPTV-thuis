@@ -1,11 +1,13 @@
 import base64
+import io
 import tempfile
 import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
 
-from mijntv.catchup import Catchup, identity, text
+from mijntv.catchup import Catchup, ProviderRequestError, identity, text
 from mijntv.recordings import Recordings
 from mijntv.store import Store
 
@@ -137,6 +139,30 @@ class CatchupTests(unittest.TestCase):
     def test_plain_text_and_html_decoding(self):
         self.assertEqual(text('Een gewone titel'),'Een gewone titel')
         self.assertEqual(text(base64.b64encode(b'<b>Nieuws</b>').decode()),'Nieuws')
+
+    def test_request_errors_explain_failure_without_leaking_credentials(self):
+        provider = Catchup(self.store)
+        configuration = provider.configuration()
+        for error, reason, expected in [
+                (TimeoutError('private-password'), 'timeout', 'twintig seconden'),
+                (URLError(TimeoutError('private-password')), 'timeout', 'twintig seconden'),
+                (URLError('private-password'), 'connection', 'verbinding'),
+                (HTTPError('https://private-password', 403, 'private-password', {}, None), 'http', 'HTTP 403')]:
+            with self.subTest(reason=reason), patch('mijntv.catchup.urlopen', side_effect=error):
+                with self.assertRaises(ProviderRequestError) as caught:
+                    provider.request(configuration, 'get_vod_streams')
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertIn(expected, str(caught.exception))
+                self.assertNotIn('private-password', str(caught.exception))
+        with patch('mijntv.catchup.urlopen', return_value=io.BytesIO(b'not-json-private-password')):
+            with self.assertRaises(ProviderRequestError) as caught:
+                provider.request(configuration)
+            self.assertEqual(caught.exception.reason, 'invalid_response')
+            self.assertNotIn('private-password', str(caught.exception))
+        with patch('mijntv.catchup.MAX_RESPONSE', 4), patch('mijntv.catchup.urlopen', return_value=io.BytesIO(b'12345')):
+            with self.assertRaises(ProviderRequestError) as caught:
+                provider.request(configuration)
+            self.assertEqual(caught.exception.reason, 'too_large')
 
 
 if __name__ == '__main__': unittest.main()

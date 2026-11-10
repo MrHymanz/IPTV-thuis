@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mijntv.catchup import Catchup
+from mijntv.catchup import Catchup, ProviderRequestError
 from mijntv.store import Store
 from mijntv.vod import VOD, duration
 
@@ -174,3 +174,49 @@ class VODTests(unittest.TestCase):
         self.assertEqual(duration({'duration': 'broken'}), 0)
         self.assertEqual(duration({'duration_secs': 'nan'}), 0)
         self.assertEqual(duration({'duration': '42:00'}), 2520)
+
+    def test_large_or_slow_full_catalog_falls_back_to_individual_categories(self):
+        self.movies.append(dict(self.movies[0], stream_id=8, name='Andere film', category_id='2'))
+        def response(configuration, action, **params):
+            if action == 'get_vod_categories':
+                return [{'category_id': '1', 'category_name': 'HBO'}, {'category_id': '2', 'category_name': 'Netflix'}]
+            if action == 'get_vod_streams':
+                if not params.get('category_id'):
+                    raise ProviderRequestError('too_large', 'De providerlijst is te groot.')
+                return [i for i in self.movies if i['category_id'] == params['category_id']]
+            return self.request(configuration, action, **params)
+        self.provider.request.side_effect = response
+        initial = self.catalog()
+        self.assertTrue(initial['requires_category'])
+        self.assertEqual(len(initial['categories']), 2)
+        self.assertEqual(initial['items'], [])
+        calls = self.provider.request.call_count
+        self.assertTrue(self.catalog()['requires_category'])
+        self.assertEqual(self.provider.request.call_count, calls)
+        first = self.catalog(category='1')
+        self.assertFalse(first['requires_category'])
+        self.assertEqual([i['title'] for i in first['items']], ['Een film'])
+        self.provider.request.assert_called_with(self.vod.configuration(), 'get_vod_streams', category_id='1')
+        second = self.catalog(category='2')
+        self.assertEqual([i['title'] for i in second['items']], ['Andere film'])
+        calls = self.provider.request.call_count
+        self.assertEqual(self.catalog(category='1')['total'], 1)
+        self.assertEqual(self.provider.request.call_count, calls)
+        self.assertEqual(self.catalog('series')['items'][0]['title'], 'Een serie')
+
+    def test_category_failure_is_reported_without_creating_a_successful_empty_cache(self):
+        def response(configuration, action, **params):
+            if action == 'get_vod_streams':
+                raise ProviderRequestError('timeout', 'De provider reageerde niet binnen twintig seconden.')
+            return self.request(configuration, action, **params)
+        self.provider.request.side_effect = response
+        self.assertTrue(self.catalog()['requires_category'])
+        with self.assertRaisesRegex(ValueError, 'twintig seconden'):
+            self.catalog(category='1')
+        with self.store.connect() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM vod_meta WHERE kind='movie:category:1'").fetchone())
+
+    def test_category_fetch_does_not_accept_unrelated_provider_items(self):
+        self.movies.append(dict(self.movies[0], stream_id=8, name='Andere film', category_id='2'))
+        result = self.catalog(category='1')
+        self.assertEqual([i['id'] for i in result['items']], ['7'])
