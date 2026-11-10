@@ -17,6 +17,7 @@ from .display import Display
 from .recordings import Recordings
 from .streams import StreamHub
 from .mobile import MobilePlayback
+from .vod import VOD
 
 
 def hash_password(password, salt):
@@ -52,7 +53,8 @@ class AdminServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.streams = StreamHub(store)
         self.recordings = Recordings(store,self.streams)
-        self.mobile = MobilePlayback(store, self.recordings, self.streams)
+        self.vod = VOD(store, self.recordings.catchup)
+        self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
 
     def server_close(self):
         if hasattr(self,'mobile'):
@@ -103,6 +105,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts.path == '/api/mobile/status':
                 self.reply(200, self.server.mobile.status(params.get('token', [''])[0]))
+            elif parts.path == '/api/mobile/vod':
+                self.reply(200, self.server.vod.catalog(params.get('kind', ['movie'])[0],
+                    params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0]))
+            elif parts.path == '/api/mobile/vod/detail':
+                self.reply(200, self.server.vod.detail(params.get('kind', ['movie'])[0], params.get('id', [''])[0]))
+            elif parts.path == '/api/mobile/vod/cover':
+                url = self.server.vod.cover_url(params.get('kind', ['movie'])[0], params.get('id', [''])[0])
+                if not url:
+                    self.reply(404, {'error': 'Geen cover beschikbaar.'}); return
+                try:
+                    data, mime = self.server.logos.get(url)
+                    self.reply(200, data, mime)
+                except ValueError:
+                    self.reply(404, {'error': 'Cover niet beschikbaar.'})
             elif parts.path == '/api/mobile/guide':
                 guide = self.server.recordings.catchup.guide(params.get('id', [''])[0])
                 fields = ('start', 'end', 'title', 'description', 'archive', 'archive_days')

@@ -184,6 +184,56 @@ class MobileTests(unittest.TestCase):
         self.assertEqual(session['process'].signals,[signal.SIGSTOP,signal.SIGCONT])
         self.assertEqual(session['kind'],'recording')
 
+    def vod_fixture(self):
+        def response(configuration, action, **params):
+            return {'get_vod_categories': [{'category_id': '1', 'category_name': 'HBO'}],
+                    'get_vod_streams': [{'stream_id': '77', 'name': 'Testfilm', 'category_id': '1', 'container_extension': 'mkv'}],
+                    'get_vod_info': {'info': {'duration_secs': 3600}, 'movie_data': {'container_extension': 'mkv'}},
+                    'get_series_categories': [{'category_id': '1', 'category_name': 'Netflix'}],
+                    'get_series': [{'series_id': '77', 'name': 'Testserie', 'category_id': '1'}],
+                    'get_series_info': {'info': {}, 'episodes': {'1': [{'id': '88', 'title': 'Aflevering', 'info': {'duration_secs': 1800}}]}}}[action]
+        patcher = patch.object(self.mobile.vod.provider, 'request', side_effect=response)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return self.mobile.vod.catalog('movie')['signature']
+
+    def test_movie_playback_keeps_credentials_in_private_manifest_and_resumes(self):
+        signature = self.vod_fixture()
+        result = self.mobile.start({'kind': 'movie', 'id': '77', 'signature': signature, 'position': 123})
+        session = self.mobile.sessions[result['token']]
+        self.assertEqual(result['title'], 'Testfilm')
+        self.assertEqual(result['position'], 123)
+        self.assertEqual(result['duration'], 3600)
+        self.assertEqual(session['account'], self.hub.account_key('primary'))
+        self.assertNotIn('test-secret', json.dumps(result))
+        self.assertNotIn('test-secret', ' '.join(session['process'].args))
+        manifest = Path(session['directory'].name)/'input.ffconcat'
+        self.assertIn('/movie/viewer/test-secret/77.mkv', manifest.read_text())
+        self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
+        self.mobile.pause(result['token'], True)
+        self.assertEqual(session['process'].signals, [signal.SIGSTOP])
+        self.tv()
+        self.assertEqual(self.mobile.status(result['token'])['state'], 'preempted')
+
+    def test_vod_never_uses_backup_ids_or_interrupts_an_active_tv(self):
+        signature = self.vod_fixture()
+        tv = self.tv()
+        with self.assertRaises(RecordingConflict):
+            self.mobile.start({'kind': 'movie', 'id': '77', 'signature': signature})
+        self.assertFalse(tv.closed)
+        self.process.assert_not_called()
+
+    def test_episode_uses_selected_series_episode_and_actual_duration(self):
+        signature = self.vod_fixture()
+        self.mobile.vod.catalog('series')
+        self.mobile.vod.detail('series', '77')
+        result = self.mobile.start({'kind': 'episode', 'id': '88', 'signature': signature})
+        self.assertEqual(result['title'], 'Aflevering')
+        self.assertEqual(result['channel'], 'Testserie')
+        self.assertEqual(result['duration'], 1800)
+        session = self.mobile.sessions[result['token']]
+        self.assertIn('/series/viewer/test-secret/88.mp4', (Path(session['directory'].name)/'input.ffconcat').read_text())
+
 
 class QuietFiles(SimpleHTTPRequestHandler):
     def log_message(self,*args):

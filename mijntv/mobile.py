@@ -13,11 +13,13 @@ import time
 import unicodedata
 
 from .streams import RecordingConflict
+from .vod import VOD
 
 
 class MobilePlayback:
-    def __init__(self, store, recordings, streams):
+    def __init__(self, store, recordings, streams, vod=None):
         self.store, self.recordings, self.streams = store, recordings, streams
+        self.vod = vod or VOD(store, recordings.catchup)
         self.sessions = {}
         self.current = None
         self.avoid = {}
@@ -79,11 +81,12 @@ class MobilePlayback:
         offset = data.get('position', 0)
         if isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset) or offset < 0:
             raise ValueError('Ongeldige afspeelpositie.')
-        if kind not in ('live', 'recording', 'archive'):
+        if kind not in ('live', 'recording', 'archive', 'movie', 'episode'):
             raise ValueError('Ongeldig afspeeltype.')
         if offset > 7 * 86400 or (kind == 'live' and offset):
             raise ValueError('Ongeldige afspeelpositie.')
         local_recording = None
+        vod = self.vod.playback(kind, data.get('id'), data.get('signature')) if kind in ('movie', 'episode') else None
         if kind == 'recording':
             row = next((r for r in self.recordings.list() if r['id'] == data.get('id')), None)
             if not row or not row['playable'] or row['state'] in ('queued', 'recording'):
@@ -107,6 +110,15 @@ class MobilePlayback:
                 identifier = row['id']
                 title, label = row['title'], row['channel']
                 source = None
+            elif vod is not None:
+                self.vod.check(vod['configuration'])
+                identifier = str(data.get('id'))
+                try:
+                    source, account = self._source({'url': vod['url'], 'account': 'primary'})
+                except RecordingConflict:
+                    raise RecordingConflict('Het hoofdaccount voor films en series is bezet of tijdelijk niet beschikbaar. De tv en opnames houden voorrang. Probeer later opnieuw.') from None
+                address = vod['url']
+                title, label, duration = vod['title'], vod['label'], vod['duration']
             else:
                 identifier = data.get('id')
                 channel = next((f for f in self.store.favorites(playback=True) if f['id'] == identifier), None)

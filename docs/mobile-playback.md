@@ -22,6 +22,18 @@ Live kun je binnen de beschikbare buffer (ongeveer anderhalve minuut) terugspoel
 
 In de gids kun je eerdere uitzendingen openen als het providerarchief die beschikbaar stelt, het huidige programma live bekijken of het resterende deel opnemen, en toekomstige programma's plannen. De app maakt geen voorbeeldopnames meer. Annuleren, stoppen en verwijderen worden bevestigd.
 
+## Films en series
+
+De tabs **Films** en **Series** laden hun eigen aanbod en categorieën via de Xtream-API van het hoofdaccount. Gelijknamige categorieën en identieke titel-ID's uit beide onderdelen blijven gescheiden. De categorienaam van de provider wordt overgenomen: HBO en Netflix verschijnen als filter wanneer de provider die indeling aanbiedt. Een M3U zonder bijbehorende Xtream-login biedt deze bibliotheek niet.
+
+De bibliotheek heeft titelzoekopdrachten, categorieën, paginering per zestig titels, film-/seriecovers en detailvensters. Beschrijving, genre, jaar, beoordeling, speelduur, cast en regisseur verschijnen voor zover de provider ze meestuurt. Ontbrekende covers krijgen een tekstalternatief. Series tonen de beschikbare seizoenen en afleveringen op volgorde. Covers worden via het mediacenter opgehaald en gecachet; de browser krijgt geen externe coveradressen of providerinloggegevens.
+
+Aanbod en details worden op aanvraag opgehaald en zes uur gecachet, los van de live-zenderlijst en favorieten. Bij een tijdelijke providerfout blijft eerder opgehaald aanbod beschikbaar met een melding. Een ander hoofdaccount krijgt een eigen cache, kijklijst en afspeelposities. De kijklijst en geschiedenis staan alleen in de lokale browseropslag: wissen van websitegegevens verwijdert ze en ze worden niet met andere telefoons gesynchroniseerd.
+
+Films en afleveringen gebruiken dezelfde HLS-speler, pauzeren en spoelknoppen. Bij een bekende speelduur werkt ook de tijdlijn; anders blijft de duur als onbekend aangegeven. De laatst bekeken positie wordt op de telefoon bewaard. **Verder kijken** toont eerder gestarte films en series; bij een serie wordt het laatst bekeken seizoen voorgeselecteerd en de afspeelpositie per aflevering getoond.
+
+Deze streams gebruiken uitsluitend het hoofdaccount. Een film- of aflevering-ID van dat account mag niet zomaar op een backupaccount worden gebruikt. Als tv of opname het hoofdaccount nodig heeft, krijgt die voorrang en stopt eerst de mobiele stream. Er wordt geen extra gelijktijdige providerverbinding geopend om een bezet account te omzeilen. Je eigen provider en fysieke iPhone/Android blijven nodig om de beschikbare titels, codecs, geluid en de netwerkroute te controleren.
+
 De huidige ondersteuning richt zich op de bestaande x86_64-mediacenterinstallatie. Test op je eigen iPhone/Safari en Android-toestel blijft nodig voor browserbediening, hoorbaar geluid en je eigen WireGuard-route. Een Raspberry Pi 5 is nog geen geteste vervanging voor het huidige mediacenter.
 
 ## hls.js

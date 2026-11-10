@@ -11,6 +11,7 @@
 <header class="topbar"><a class="brand" href="#home" aria-label="IPTV thuis start"><span class="brand-mark">tv<span>•</span></span><span>IPTV<span class="brand-light"> thuis</span></span></a><button class="avatar" id="about" aria-label="Verbinding en instellingen">⚙︎</button></header>
 <main id="main" tabindex="-1">
 <p id="connection-message" class="notice" role="status" hidden></p>
+<div class="media-tabs" aria-label="Kies aanbod"><button data-go="home" class="active">Live tv</button><button data-go="films">Films</button><button data-go="series">Series</button></div>
 <section id="home-view" class="view">
 <div class="greeting"><p class="eyebrow">JOUW TELEVISIE, BINNEN HANDBEREIK</p><h1 id="greeting">Welkom thuis.</h1><p>Een goed moment om even te kijken.</p></div>
 <button class="hero" id="featured" disabled><span class="hero-grid" aria-hidden="true"></span><span class="hero-top"><span class="tag light"><span class="live-dot"></span> NU LIVE</span><span id="hero-logo" class="hero-logo"></span></span><span class="hero-bottom"><span id="hero-channel" class="hero-meta">Je favorieten laden…</span><strong id="hero-title">Jouw tv. Ook hier.</strong><span id="hero-time" class="hero-description"></span><span class="hero-track"><span id="hero-progress"></span></span><span class="watch-pill"><span aria-hidden="true">▶</span> Live kijken</span></span></button>
@@ -39,6 +40,15 @@
 <div class="chips" id="guide-days"><button class="chip" data-day="-1" aria-pressed="false">Gisteren</button><button class="chip active" data-day="0" aria-pressed="true">Vandaag</button><button class="chip" data-day="1" aria-pressed="false">Morgen</button></div>
 <div class="section-heading"><h2 id="guide-heading">Vandaag</h2><button id="guide-refresh" class="text-button">Verversen ↻</button></div><p id="guide-notice" class="small-muted"></p><div id="guide-list"></div>
 </section>
+<section id="vod-view" class="view" hidden>
+<p class="eyebrow" id="vod-eyebrow">OP JOUW MOMENT</p><h1 id="vod-heading">Een avond voor jezelf.</h1><p class="subtitle" id="vod-subtitle">Grote verhalen. Gewoon bij jou thuis.</p>
+<button class="vod-featured" id="vod-featured" hidden><span id="vod-featured-art" class="vod-featured-art"></span><span class="vod-featured-copy"><span class="tag light" id="vod-featured-tag">UITGELICHT</span><strong id="vod-featured-title"></strong><span id="vod-featured-meta"></span><span class="watch-pill">▶ &nbsp; Bekijk details</span></span></button>
+<label class="search"><span aria-hidden="true">⌕</span><input id="vod-search" type="search" placeholder="Zoek een film" autocomplete="off" aria-label="Zoek een film"></label>
+<label class="guide-select" for="vod-category">Bron of categorie<select id="vod-category"><option value="">Alle categorieën</option></select></label>
+<div class="chips vod-filters" aria-label="Bibliotheek"><button class="chip active" id="vod-all" aria-pressed="true">Alles ontdekken</button><button class="chip" id="vod-saved" aria-pressed="false">♡ Mijn kijklijst</button><button class="chip" id="vod-continue" aria-pressed="false">Verder kijken</button></div>
+<div class="section-heading"><h2 id="vod-list-heading">Ontdek iets moois</h2><span class="small-muted" id="vod-count"></span></div>
+<p id="vod-notice" class="small-muted" role="status"></p><div id="vod-list" class="vod-grid" aria-live="polite"></div><button id="vod-more" class="primary-button vod-more" hidden>Meer laden</button><button id="vod-retry" class="primary-button" hidden>Opnieuw proberen</button>
+</section>
 </main>
 <nav class="bottom-nav" aria-label="Hoofdnavigatie"><button class="nav-button active" data-go="home" aria-current="page"><span aria-hidden="true">⌂</span>Home</button><button class="nav-button" data-go="channels"><span aria-hidden="true">▦</span>Zenders</button><button class="nav-button" data-go="guide"><span aria-hidden="true">◷</span>Terugkijken</button><button class="nav-button" data-go="recordings"><span aria-hidden="true">◉</span>Opnames</button></nav>
 </div>
@@ -52,6 +62,7 @@
 <p class="player-hint">Tik om 15 seconden te spoelen.<br>Houd vast voor stappen van maximaal 30 seconden.</p></div>
 </dialog>
 <dialog id="programme" aria-labelledby="programme-title"><div class="programme-content"><button id="close-programme" class="icon-button close-corner" aria-label="Sluiten">✕</button><p id="programme-meta" class="eyebrow"></p><h2 id="programme-title"></h2><p id="programme-time" class="small-muted"></p><p id="programme-description"></p><div id="programme-actions"></div></div></dialog>
+<dialog id="vod-detail" aria-labelledby="vod-detail-title"><div class="programme-content"><button id="vod-close" class="icon-button close-corner" aria-label="Sluiten">✕</button><p class="eyebrow" id="vod-detail-kind"></p><div id="vod-detail-cover" class="vod-detail-cover"></div><h2 id="vod-detail-title"></h2><p id="vod-detail-meta" class="small-muted"></p><p id="vod-detail-description"></p><p id="vod-detail-cast" class="small-muted"></p><p id="vod-detail-notice" class="small-muted" role="status"></p><div id="vod-detail-actions"></div><div id="vod-seasons" hidden><label class="guide-select" for="vod-season">Seizoen<select id="vod-season"></select></label><div id="vod-episodes"></div></div></div></dialog>
 <dialog id="about-dialog" aria-labelledby="about-title"><div class="about-content"><span class="brand-mark">tv<span>•</span></span><h2 id="about-title">Je eigen tv.<br>Ook op je telefoon.</h2><p>Je kijkt via je mediacenter. Buiten je thuisnetwerk zet je eerst je WireGuard-VPN aan.</p><p>De tv en opnames houden voorrang. Voor mobiel kiezen we automatisch een vrij kijkaccount. Je IPTV-wachtwoorden blijven op het mediacenter.</p><p id="version" class="small-muted"></p><a class="settings-link" href="/admin">Open beheer ↗</a><button id="close-about" class="primary-button">Terug naar mijn tv</button></div></dialog>
 <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
 </body></html>

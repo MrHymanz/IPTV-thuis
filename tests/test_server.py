@@ -95,6 +95,25 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'src="/mobile.js"', html)
         self.assertIn(b'href="/mobile.css"', html)
 
+    def test_mobile_vod_routes_require_auth_and_keep_covers_on_server(self):
+        for path in ('/api/mobile/vod', '/api/mobile/vod/detail', '/api/mobile/vod/cover'):
+            self.assertEqual(self.request('GET', path, auth=False)[0], 401)
+        with patch.object(self.server.vod, 'catalog', return_value={'items': [], 'categories': []}) as catalog:
+            self.assertEqual(self.request('GET', '/api/mobile/vod?kind=series&category=12&q=Test&offset=60')[0], 200)
+            catalog.assert_called_once_with('series', '12', 'Test', '60')
+        with patch.object(self.server.vod, 'detail', return_value={'title': 'Testserie'}) as detail:
+            self.assertEqual(self.request('GET', '/api/mobile/vod/detail?kind=series&id=7')[0], 200)
+            detail.assert_called_once_with('series', '7')
+        with patch.object(self.server.vod, 'cover_url', return_value='https://private.test/secret'), \
+                patch.object(self.server.logos, 'get', return_value=(b'fixture', 'image/png')) as logo:
+            status, body = self.request('GET', '/api/mobile/vod/cover?kind=movie&id=7')
+            self.assertEqual((status, body), (200, b'fixture'))
+            logo.assert_called_once_with('https://private.test/secret')
+        with patch.object(self.server.vod, 'catalog', side_effect=ValueError('Stel een Xtream-login in.')):
+            status, body = self.request('GET', '/api/mobile/vod')
+            self.assertEqual(status, 400)
+            self.assertIn(b'Xtream', body)
+
     def test_mobile_video_and_controls_require_authentication_and_same_origin(self):
         with patch.object(self.server.mobile,'start',return_value={'token':'session','playlist':'/api/mobile/hls/session/index.m3u8'}) as start:
             body={'kind':'live','id':'favorite'}
