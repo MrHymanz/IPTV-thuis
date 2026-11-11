@@ -158,9 +158,9 @@ function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-v
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
 function vodKey(item) {return item.kind+':'+item.id;}
 function playbackKey(data) {return ['movie','episode'].includes(data.kind)?data.signature+'-'+data.kind+'-'+data.id:data.id;}
-function vodPoster(item) {
+function vodPoster(item, landscape=false) {
   const wrap=element('span','vod-poster');wrap.append(element('span','',item.title));
-  if(item.cover){const img=element('img');img.src=item.cover;img.alt='';img.loading='lazy';img.onerror=()=>img.remove();wrap.append(img);}
+  if(item.cover||(landscape&&item.backdrop)){const img=element('img');let usedPoster=!landscape||!item.backdrop;img.src=usedPoster?item.cover:item.backdrop;img.alt='';img.loading='lazy';img.onerror=()=>{if(!usedPoster&&item.cover){usedPoster=true;img.src=item.cover;}else img.remove();};wrap.append(img);}
   return wrap;
 }
 function vodCard(item) {
@@ -180,7 +180,7 @@ function renderVod() {
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
   $('vod-more').hidden=vodFilter!=='all'||vodItems.length>=vodTotal;
   $('vod-featured').hidden=vodFilter!=='all'||!shown.length||!!q||!!vodState[vodKind].category;
-  if(shown.length){const item=shown[0];$('vod-featured-art').replaceChildren(vodPoster(item));$('vod-featured-title').textContent=item.title;$('vod-featured-meta').textContent=[item.year,item.rating?'★ '+item.rating:''].filter(Boolean).join(' · ');$('vod-featured-tag').textContent=vodKind==='movie'?'UITGELICHT · FILM':'UITGELICHT · SERIE';$('vod-featured').onclick=()=>openVodDetail(item);}
+  if(shown.length){const item=shown[0];$('vod-featured-art').replaceChildren(vodPoster(item,true));$('vod-featured-title').textContent=item.title;$('vod-featured-meta').textContent=[item.year,item.rating?'★ '+item.rating:''].filter(Boolean).join(' · ');$('vod-featured-tag').textContent=vodKind==='movie'?'UITGELICHT · FILM':'UITGELICHT · SERIE';$('vod-featured').onclick=()=>openVodDetail(item);}
   for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']]){const active=filter===vodFilter;$(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));}
 }
 async function loadVod(append=false,quiet=false) {

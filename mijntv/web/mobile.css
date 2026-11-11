@@ -18,3 +18,5 @@ dialog{max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--paper:#142321;--ink:#e4ece4;--muted:#a0b2a7;--line:#35483f;--green:#b3d29e;--accent:#e4ed9c;--surface:#22362f;--soft:#2d4438;--nav:#142321ed;--field:#22362f}}
 .primary-button,.chip.active,.brand-mark{background:#234b43;color:#fff}.media-tabs button.active{color:var(--green)}.recording-art{position:relative;overflow:hidden}.recording-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.recording-art{background:var(--surface);color:var(--green)}.search{background:var(--field)}.channel-logo{background:var(--surface)}.quiet-note,.connection-card{background:var(--surface)}.storage-track{background:var(--line)}.channel-track{background:var(--line)}
 .watch-pill{color:#234b43}.tag{background:var(--soft)}.recording-art{width:88px;flex-basis:88px;height:55px;border-radius:9px}
+
+.tmdb-credit{border-top:1px solid var(--line);padding-top:15px;margin-top:20px}.tmdb-credit img{display:block;width:90px;height:auto}.tmdb-credit p{font-size:10px;line-height:1.7;color:var(--muted)}

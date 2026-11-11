@@ -57,3 +57,13 @@ Vendored versie: **1.7.3** uit het officiële npm-pakket `hls.js`; SHA-512-integ
 - SHA-256: `a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e`
 - Licentie: Apache-2.0, meegeleverd als `mijntv/web/hls.LICENSE.txt`
 - Bron en compatibiliteit: https://github.com/video-dev/hls.js/tree/v1.7.3
+
+## Ontbrekende posters en achtergronden (TMDB)
+
+In **Beheer → Mobiele films en series → Ontbrekende posters en banners aanvullen (TMDB)** sla je een eigen TMDB API-key of API Read Access Token op. De knop **Verbinding testen** controleert de opgeslagen sleutel. Het beheer toont de sleutel nooit terug; leegmaken via **TMDB-aanvulling uitschakelen** schakelt aanvullende aanvragen uit. Zonder sleutel verandert de bestaande providerweergave niet.
+
+Een geldige providerafbeelding blijft de eerste keuze. Een ontbrekende of defecte poster wordt via TMDB aangevuld; voor brede achtergronden worden afzonderlijke backdrop-afbeeldingen gebruikt. Films en series worden apart gezocht. Een expliciete TMDB-ID heeft voorrang, gevolgd door een IMDb-ID. Zonder ID worden titel en, indien bekend, jaartal gecontroleerd en moet er precies één passende titel overblijven. Remakes of meerdere gelijke titels krijgen geen willekeurige afbeelding. Ontbreekt ook bij TMDB een passende afbeelding, dan blijft de tekstcover staan.
+
+De server stuurt alleen de titelidentiteit naar TMDB, nooit IPTV-accounts of provideradressen. De TMDB-sleutel blijft in de private instellingendatabase. Metadata wordt maximaal dertig dagen gecachet; zonder match wordt maximaal een dag gewacht voor een nieuwe zoekpoging. Verbindings- of authenticatiefouten krijgen een herstelpauze van vijf minuten. Een andere sleutel of provider krijgt een eigen cache; verborgen categorieën kunnen ook via oude afbeeldingsadressen niet worden geopend. De rasterafbeeldingen worden lokaal bewaard door de bestaande afbeeldingscache. De mobiele Over-sectie bevat de TMDB-bronvermelding en het officiële logo; dat openbare logo wordt rechtstreeks bij TMDB geladen.
+
+API-documentatie: [identificatie via IMDb](https://developer.themoviedb.org/reference/find-by-id), [afbeeldingen](https://developer.themoviedb.org/docs/image-basics), [API-sleutel aanvragen](https://www.themoviedb.org/settings/api).

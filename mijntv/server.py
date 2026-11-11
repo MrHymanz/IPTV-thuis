@@ -19,6 +19,7 @@ from .streams import StreamHub
 from .mobile import MobilePlayback
 from .vod import VOD
 from .thumbnails import RecordingThumbnails
+from .artwork import Artwork
 
 
 def hash_password(password, salt):
@@ -55,6 +56,7 @@ class AdminServer(ThreadingHTTPServer):
         self.streams = StreamHub(store)
         self.recordings = Recordings(store,self.streams)
         self.vod = VOD(store, self.recordings.catchup)
+        self.artwork = Artwork(store, self.vod, self.logos)
         self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
 
@@ -84,7 +86,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' https://www.themoviedb.org/assets/; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -122,17 +124,27 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(404, {'error': 'Thumbnail nog niet beschikbaar.'})
             elif parts.path == '/api/mobile-library':
                 self.reply(200, self.server.vod.settings(params.get('refresh', ['0'])[0] == '1'))
+            elif parts.path == '/api/artwork-settings':
+                self.reply(200, self.server.artwork.status())
             elif parts.path == '/api/mobile/vod/detail':
                 self.reply(200, self.server.vod.detail(params.get('kind', ['movie'])[0], params.get('id', [''])[0]))
             elif parts.path == '/api/mobile/vod/cover':
-                url = self.server.vod.cover_url(params.get('kind', ['movie'])[0], params.get('id', [''])[0])
-                if not url:
-                    self.reply(404, {'error': 'Geen cover beschikbaar.'}); return
+                kind, key = params.get('kind', ['movie'])[0], params.get('id', [''])[0]
+                asset = params.get('asset', ['poster'])[0]
+                if asset not in ('poster', 'backdrop'):
+                    raise ValueError('Ongeldig afbeeldingstype.')
+                url = self.server.vod.cover_url(kind, key) if asset == 'poster' else self.server.vod.backdrop_url(kind, key)
                 try:
+                    if not url:
+                        raise ValueError('Geen providerafbeelding.')
                     data, mime = self.server.logos.get(url)
                     self.reply(200, data, mime)
                 except ValueError:
-                    self.reply(404, {'error': 'Cover niet beschikbaar.'})
+                    try:
+                        data, mime = self.server.artwork.fallback(kind, key, asset)
+                        self.reply(200, data, mime)
+                    except ValueError:
+                        self.reply(404, {'error': 'Afbeelding niet beschikbaar.'})
             elif parts.path == '/api/mobile/guide':
                 guide = self.server.recordings.catchup.guide(params.get('id', [''])[0])
                 fields = ('start', 'end', 'title', 'description', 'archive', 'archive_days')
@@ -225,9 +237,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            limit = 256*1024 if path.startswith('/api/mobile-library') else 16384 if path.startswith('/api/mobile/') else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
+            limit = 256*1024 if path.startswith('/api/mobile-library') else 16384 if path.startswith(('/api/mobile/', '/api/artwork-settings')) else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
             if not 0 < length <= limit:
-                self.reply(413, {'error': 'Aanvraag te groot.' if path.startswith('/api/mobile/') else 'Upload te groot (maximaal 512 MB M3U).'}); return
+                self.reply(413, {'error': 'Aanvraag te groot.' if path.startswith(('/api/mobile/', '/api/artwork-settings')) else 'Upload te groot (maximaal 512 MB M3U).'}); return
             if path == '/api/import/file':
                 self.reply(200, {'ok': True, 'imported': self.server.store.import_file(self.rfile, length)})
                 return
@@ -242,6 +254,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.vod.save_selection(data.get('selection'))
             elif path == '/api/mobile-library/imdb':
                 result['count'] = self.server.vod.chart.save(data.get('entries'))
+            elif path == '/api/artwork-settings':
+                result['artwork'] = self.server.artwork.configure(data.get('key'))
+            elif path == '/api/artwork-settings/test':
+                result.update(self.server.artwork.test())
             elif path == '/api/mobile/pause':
                 result['player'] = self.server.mobile.pause(data.get('token'), data.get('paused'))
             elif path == '/api/mobile/stop':

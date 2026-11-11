@@ -130,6 +130,38 @@ class ServerTests(unittest.TestCase):
         with patch.object(self.server.vod, 'settings', side_effect=ValueError('Stel je Xtream-login in.')):
             self.assertIn(b'Xtream', self.request('GET', '/api/mobile-library')[1])
 
+    def test_artwork_settings_are_private_and_do_not_echo_saved_credentials(self):
+        self.assertEqual(self.request('GET', '/api/artwork-settings', auth=False)[0], 401)
+        key = 'a'*32
+        self.assertEqual(self.request('POST', '/api/artwork-settings', {'key': key}, custom=False)[0], 403)
+        self.assertEqual(self.request('POST', '/api/artwork-settings', {'key': key}, origin='https://other.test')[0], 403)
+        status, body = self.request('POST', '/api/artwork-settings', {'key': key})
+        self.assertEqual(status, 200)
+        self.assertNotIn(key.encode(), body)
+        self.assertEqual(self.store.setting('tmdb_key'), key)
+        status, body = self.request('GET', '/api/artwork-settings')
+        self.assertTrue(json.loads(body)['configured'])
+        self.assertNotIn(key.encode(), body)
+        with patch.object(self.server.artwork, 'test', return_value={'ok': True}) as test:
+            self.assertEqual(self.request('POST', '/api/artwork-settings/test', {})[0], 200)
+            test.assert_called_once()
+
+    def test_provider_artwork_keeps_priority_and_broken_images_use_fallback(self):
+        with patch.object(self.server.vod, 'cover_url', return_value='https://private.test/cover'), \
+                patch.object(self.server.logos, 'get', return_value=(b'provider', 'image/jpeg')), \
+                patch.object(self.server.artwork, 'fallback') as fallback:
+            self.assertEqual(self.request('GET', '/api/mobile/vod/cover?kind=movie&id=7'), (200, b'provider'))
+            fallback.assert_not_called()
+        with patch.object(self.server.vod, 'cover_url', return_value='https://private.test/broken'), \
+                patch.object(self.server.logos, 'get', side_effect=ValueError('Unavailable')), \
+                patch.object(self.server.artwork, 'fallback', return_value=(b'tmdb', 'image/jpeg')) as fallback:
+            self.assertEqual(self.request('GET', '/api/mobile/vod/cover?kind=series&id=7'), (200, b'tmdb'))
+            fallback.assert_called_once_with('series', '7', 'poster')
+        with patch.object(self.server.vod, 'backdrop_url', return_value=''), \
+                patch.object(self.server.artwork, 'fallback', return_value=(b'backdrop', 'image/jpeg')) as fallback:
+            self.assertEqual(self.request('GET', '/api/mobile/vod/cover?kind=movie&id=7&asset=backdrop'), (200, b'backdrop'))
+            fallback.assert_called_once_with('movie', '7', 'backdrop')
+
     def test_mobile_video_and_controls_require_authentication_and_same_origin(self):
         with patch.object(self.server.mobile,'start',return_value={'token':'session','playlist':'/api/mobile/hls/session/index.m3u8'}) as start:
             body={'kind':'live','id':'favorite'}

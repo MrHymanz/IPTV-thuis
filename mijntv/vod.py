@@ -75,6 +75,9 @@ class VOD:
                 CREATE TABLE IF NOT EXISTS vod_meta (
                     signature TEXT NOT NULL, kind TEXT NOT NULL, updated REAL NOT NULL,
                     PRIMARY KEY(signature,kind));
+                CREATE TABLE IF NOT EXISTS vod_backdrops (
+                    signature TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, url TEXT NOT NULL,
+                    PRIMARY KEY(signature,kind,id));
                 CREATE TABLE IF NOT EXISTS vod_details (
                     signature TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL,
                     updated REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY(signature,kind,id));
@@ -245,7 +248,7 @@ class VOD:
                     continue
                 data = {'id': key, 'kind': kind, 'title': title, 'category': str(item.get('category_id') or category),
                         'year': clean(item.get('year') or str(item.get('releaseDate') or item.get('release_date') or '')[:4], 10),
-                        'rating': clean(item.get('rating'), 10), 'imdb_id': clean(item.get('imdb_id') or item.get('imdb'), 20)}
+                        'rating': clean(item.get('rating'), 10), 'imdb_id': clean(item.get('imdb_id') or item.get('imdb'), 20), 'tmdb_id': clean(item.get('tmdb_id') or item.get('tmdb'), 20)}
                 rows[key] = (signature, kind, key, str(item.get('category_id') or category), title, title.casefold(),
                              cover(item.get('stream_icon') if kind == 'movie' else item.get('cover')),
                              extension(item.get('container_extension')), json.dumps(data))
@@ -256,7 +259,7 @@ class VOD:
             self.check(configuration)
             self.failed.pop((signature, scope), None)
             with self.store.connect() as db:
-                for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details'):
+                for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details', 'vod_backdrops'):
                     db.execute('DELETE FROM '+table+' WHERE signature<>?', (signature,))
                 if category:
                     db.execute('DELETE FROM vod_items WHERE signature=? AND kind=? AND category=?', (signature, kind, category))
@@ -276,10 +279,11 @@ class VOD:
             return 'Vernieuwen is niet gelukt. Je ziet het eerder opgehaalde aanbod.', False
 
     @staticmethod
-    def public(row):
+    def public(row, artwork_enabled=False):
         item = json.loads(row['data'])
         item['cover'] = ('/api/mobile/vod/cover?kind='+row['kind']+'&id='+row['id']+
-                         '&v='+hashlib.sha256((row['signature']+row['cover']).encode()).hexdigest()[:12]) if row['cover'] else ''
+                         '&v='+hashlib.sha256((row['signature']+row['cover']).encode()).hexdigest()[:12]) if row['cover'] or (artwork_enabled and row['kind'] in ('movie', 'series')) else ''
+        item['backdrop'] = '/api/mobile/vod/cover?kind='+row['kind']+'&id='+row['id']+'&asset=backdrop' if artwork_enabled or item.get('has_backdrop') else ''
         return item
 
     def catalog(self, kind, category='', query='', offset=0, sort='title'):
@@ -331,7 +335,8 @@ class VOD:
                           if selected is None or row['id'] in selected]
             total = db.execute('SELECT count(*) FROM vod_items WHERE '+where, args).fetchone()[0]
             rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY '+ordering+' LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
-        items = [self.public(row) for row in rows]
+        artwork_enabled = bool(self.store.setting('tmdb_key'))
+        items = [self.public(row, artwork_enabled) for row in rows]
         if sort == 'imdb250':
             ranker = self.chart.ranker()
             for item, row in zip(items, rows):
@@ -373,6 +378,7 @@ class VOD:
                     data['year'] = clean(info.get('releasedate') or info.get('releaseDate') or info.get('release_date') or data.get('year'), 10)[:4]
                     data['rating'] = clean(info.get('rating') or data.get('rating'), 10)
                     data['imdb_id'] = clean(info.get('imdb_id') or info.get('imdb') or data.get('imdb_id'), 20)
+                    data['tmdb_id'] = clean(info.get('tmdb_id') or info.get('tmdb') or data.get('tmdb_id'), 20)
                     episodes = []
                     episode_rows = []
                     if kind == 'series':
@@ -402,7 +408,12 @@ class VOD:
                     self.check(configuration)
                     movie_data = response.get('movie_data') if isinstance(response.get('movie_data'), dict) else {}
                     new_cover = cover(info.get('movie_image') or info.get('cover_big') or info.get('cover')) or row['cover']
+                    backdrops = info.get('backdrop_path') or []
+                    backdrops = backdrops if isinstance(backdrops, list) else [backdrops]
+                    backdrop = next((cover(value) for value in backdrops if cover(value)), '')
+                    data['has_backdrop'] = bool(backdrop)
                     with self.store.connect() as db:
+                        db.execute('INSERT OR REPLACE INTO vod_backdrops VALUES (?,?,?,?)', (configuration[2], kind, key, backdrop))
                         if kind == 'series':
                             db.execute("DELETE FROM vod_items WHERE signature=? AND kind='episode' AND category=?", (configuration[2], key))
                             db.executemany('INSERT OR REPLACE INTO vod_items VALUES (?,?,?,?,?,?,?,?,?)', episode_rows)
@@ -417,17 +428,32 @@ class VOD:
                     notice = 'De details konden niet worden vernieuwd. Je ziet de eerder opgehaalde informatie.'
             self.check(configuration)
             row = self._item(configuration, kind, key)
-            if data.get('imdb_id'):
+            if data.get('imdb_id') or data.get('tmdb_id') or data.get('has_backdrop'):
                 base = json.loads(row['data'])
-                base['imdb_id'] = data['imdb_id']
+                base.update({k:data[k] for k in ('imdb_id', 'tmdb_id', 'has_backdrop') if k in data})
                 with self.store.connect() as db:
                     db.execute('UPDATE vod_items SET data=? WHERE signature=? AND kind=? AND id=?', (json.dumps(base), configuration[2], kind, key))
-            return dict(data, cover=self.public(row)['cover'], notice=notice, signature=configuration[2][:16])
+            public = self.public(row, bool(self.store.setting('tmdb_key')))
+            return dict(data, cover=public['cover'], backdrop=('/api/mobile/vod/cover?kind='+kind+'&id='+key+'&asset=backdrop') if data.get('has_backdrop') else public['backdrop'], notice=notice, signature=configuration[2][:16])
 
     def cover_url(self, kind, key):
         if kind not in ('movie', 'series', 'episode'):
             raise ValueError('Ongeldige cover.')
         return self._item(self.configuration(), kind, identifier(key))['cover']
+
+    def backdrop_url(self, kind, key):
+        configuration = self.configuration()
+        self._item(configuration, self.kind(kind), identifier(key))
+        with self.store.connect() as db:
+            row = db.execute('SELECT url FROM vod_backdrops WHERE signature=? AND kind=? AND id=?', (configuration[2], kind, key)).fetchone()
+        return row['url'] if row else ''
+
+    def artwork_metadata(self, kind, key):
+        configuration = self.configuration()
+        row = self._item(configuration, self.kind(kind), identifier(key))
+        raw = json.loads(row['data'])
+        # Only public title identity is ever sent to TMDB, never provider URLs.
+        return configuration, {k:raw.get(k) for k in ('kind', 'title', 'year', 'imdb_id', 'tmdb_id')}
 
     def playback(self, kind, key, signature):
         if kind not in ('movie', 'episode'):

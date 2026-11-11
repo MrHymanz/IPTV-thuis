@@ -279,3 +279,24 @@ class VODTests(unittest.TestCase):
         self.assertEqual(self.vod.selection('movie'), [])
         self.store.set_setting('source', SOURCE.replace('secret%2Bpass', 'other'))
         self.assertIsNone(self.vod.selection('movie'))
+
+    def test_tmdb_enables_local_placeholder_cover_routes_without_exposing_image_sources(self):
+        self.movies[0]['stream_icon'] = ''
+        self.assertEqual(self.catalog()['items'][0]['cover'], '')
+        self.store.set_setting('tmdb_key', 'a'*32)
+        item = self.catalog()['items'][0]
+        self.assertTrue(item['cover'].startswith('/api/mobile/vod/cover?'))
+        self.assertIn('asset=backdrop', item['backdrop'])
+        self.assertNotIn('a'*32, json.dumps(item))
+
+    def test_provider_backdrop_and_tmdb_identity_remain_server_side(self):
+        self.catalog()
+        self.movie_info['info'].update(tmdb_id='42', backdrop_path=['https://private.test/background?password=secret'])
+        result = self.vod.detail('movie', '7')
+        self.assertIn('asset=backdrop', result['backdrop'])
+        self.assertNotIn('private.test', json.dumps(result))
+        self.assertNotIn('password', json.dumps(result))
+        self.assertEqual(self.vod.backdrop_url('movie', '7'), 'https://private.test/background?password=secret')
+        _, metadata = self.vod.artwork_metadata('movie', '7')
+        self.assertEqual(metadata['tmdb_id'], '42')
+        self.assertNotIn('background', json.dumps(metadata))
