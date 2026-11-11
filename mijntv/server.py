@@ -18,6 +18,7 @@ from .recordings import Recordings
 from .streams import StreamHub
 from .mobile import MobilePlayback
 from .vod import VOD
+from .thumbnails import RecordingThumbnails
 
 
 def hash_password(password, salt):
@@ -54,9 +55,14 @@ class AdminServer(ThreadingHTTPServer):
         self.streams = StreamHub(store)
         self.recordings = Recordings(store,self.streams)
         self.vod = VOD(store, self.recordings.catchup)
+        self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
 
     def server_close(self):
+        if hasattr(self, 'thumbnails'):
+            self.thumbnails.close()
+        if hasattr(self, 'vod'):
+            self.vod.close()
         if hasattr(self,'mobile'):
             self.mobile.close()
         if hasattr(self,'streams'):
@@ -107,7 +113,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, self.server.mobile.status(params.get('token', [''])[0]))
             elif parts.path == '/api/mobile/vod':
                 self.reply(200, self.server.vod.catalog(params.get('kind', ['movie'])[0],
-                    params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0]))
+                    params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0], params.get('sort', ['title'])[0]))
+            elif parts.path == '/api/mobile/recording-cover':
+                try:
+                    data = self.server.thumbnails.get(params.get('id', [''])[0])
+                    self.reply(200, data, 'image/jpeg')
+                except (ValueError, OSError):
+                    self.reply(404, {'error': 'Thumbnail nog niet beschikbaar.'})
+            elif parts.path == '/api/mobile-library':
+                self.reply(200, self.server.vod.settings(params.get('refresh', ['0'])[0] == '1'))
             elif parts.path == '/api/mobile/vod/detail':
                 self.reply(200, self.server.vod.detail(params.get('kind', ['movie'])[0], params.get('id', [''])[0]))
             elif parts.path == '/api/mobile/vod/cover':
@@ -183,8 +197,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, store.groups())
             elif parts.path == '/api/favorites':
                 self.reply(200, store.favorites())
-            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile.css', '/hls.min.js', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
-                filename = {'/hls.min.js': 'hls.min.js', '/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
+            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile-copy.js', '/mobile.css', '/hls.min.js', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
+                filename = {'/hls.min.js': 'hls.min.js', '/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile-copy.js': 'mobile-copy.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
                 mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'}[Path(filename).suffix]
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:
@@ -192,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
         except ValueError as error:
-            self.reply(400, {'error': str(error) if parts.path.startswith('/api/mobile/') else 'Ongeldige zoekopdracht.'})
+            self.reply(400, {'error': str(error) if parts.path.startswith('/api/mobile/') or parts.path == '/api/mobile-library' else 'Ongeldige zoekopdracht.'})
         except Exception:
             self.reply(500, {'error': 'Er ging iets mis bij het lezen. Probeer opnieuw.'})
 
@@ -211,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            limit = 16384 if path.startswith('/api/mobile/') else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
+            limit = 256*1024 if path.startswith('/api/mobile-library') else 16384 if path.startswith('/api/mobile/') else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
             if not 0 < length <= limit:
                 self.reply(413, {'error': 'Aanvraag te groot.' if path.startswith('/api/mobile/') else 'Upload te groot (maximaal 512 MB M3U).'}); return
             if path == '/api/import/file':
@@ -224,6 +238,10 @@ class Handler(BaseHTTPRequestHandler):
             result = {'ok': True}
             if path == '/api/mobile/play':
                 result['player'] = self.server.mobile.start(data)
+            elif path == '/api/mobile-library':
+                self.server.vod.save_selection(data.get('selection'))
+            elif path == '/api/mobile-library/imdb':
+                result['count'] = self.server.vod.chart.save(data.get('entries'))
             elif path == '/api/mobile/pause':
                 result['player'] = self.server.mobile.pause(data.get('token'), data.get('paused'))
             elif path == '/api/mobile/stop':

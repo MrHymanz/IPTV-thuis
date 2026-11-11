@@ -220,3 +220,62 @@ class VODTests(unittest.TestCase):
         self.movies.append(dict(self.movies[0], stream_id=8, name='Andere film', category_id='2'))
         result = self.catalog(category='1')
         self.assertEqual([i['id'] for i in result['items']], ['7'])
+
+    def test_provider_rating_order_and_actual_imdb_ranks_are_distinct(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='A film', rating='8,8', imdb_id='tt0000001'),
+                       dict(self.movies[0], stream_id=2, name='Z film', rating='9.9', imdb_id='tt0000002'),
+                       dict(self.movies[0], stream_id=3, name='Other film', rating='10')]
+        self.catalog()
+        self.assertEqual([i['id'] for i in self.vod.catalog('movie', sort='rating')['items']], ['3', '2', '1'])
+        self.vod.chart.save([{'id': 'tt0000001', 'rank': 1}, {'id': 'tt0000002', 'rank': 2}])
+        ranked = self.vod.catalog('movie', sort='imdb250')['items']
+        self.assertEqual([i['id'] for i in ranked], ['1', '2'])
+        self.assertEqual([i['imdb_rank'] for i in ranked], [1, 2])
+        with self.assertRaises(ValueError):
+            self.vod.catalog('series', sort='imdb250')
+
+    def test_selected_categories_are_combined_and_hidden_categories_cannot_be_opened(self):
+        self.movies.append(dict(self.movies[0], stream_id=8, name='Hidden', category_id='2'))
+        self.catalog()
+        self.catalog('series')
+        with self.store.connect() as db:
+            db.execute('INSERT INTO vod_categories VALUES (?,?,?,?)', (self.vod.configuration()[2], 'movie', '2', 'Other'))
+        with patch.object(self.vod, 'start_sync'):
+            self.vod.save_selection({'movie': ['1'], 'series': []})
+            result = self.catalog()
+        self.assertFalse(result['requires_category'])
+        self.assertEqual([i['id'] for i in result['items']], ['7'])
+        self.assertEqual([c['id'] for c in result['categories']], ['1'])
+        with self.assertRaisesRegex(ValueError, 'vrijgegeven'):
+            self.vod.detail('movie', '8')
+        with self.assertRaises(ValueError):
+            self.vod.cover_url('movie', '8')
+        with patch.object(self.vod, 'start_sync'):
+            self.assertEqual(self.catalog('series')['total'], 0)
+        self.assertIn('get_vod_streams', [action for action, _ in self.calls])
+
+    def test_selected_categories_load_in_background_without_full_catalog_request(self):
+        self.vod._save_categories(self.vod.configuration(), 'movie', [{'category_id': '1', 'category_name': 'HBO'}])
+        self.vod._save_categories(self.vod.configuration(), 'series', [])
+        with patch.object(self.vod, 'start_sync'):
+            self.vod.save_selection({'movie': ['1'], 'series': []})
+        self.vod.start_sync('movie')
+        with self.vod.jobs_lock:
+            workers = list(self.vod.workers.values())
+        for worker in workers:
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(self.catalog()['items'][0]['title'], 'Een film')
+        item_calls = [(action, params) for action, params in self.calls if action == 'get_vod_streams']
+        self.assertEqual(item_calls, [('get_vod_streams', {'category_id': '1'})])
+        self.vod.close()
+
+    def test_category_settings_do_not_fetch_titles_and_are_scoped_to_the_provider(self):
+        settings = self.vod.settings()
+        self.assertTrue(settings['kinds']['movie']['categories'][0]['enabled'])
+        self.assertEqual({action for action, _ in self.calls}, {'get_vod_categories', 'get_series_categories'})
+        with patch.object(self.vod, 'start_sync'):
+            self.vod.save_selection({'movie': [], 'series': []})
+        self.assertEqual(self.vod.selection('movie'), [])
+        self.store.set_setting('source', SOURCE.replace('secret%2Bpass', 'other'))
+        self.assertIsNone(self.vod.selection('movie'))

@@ -8,6 +8,7 @@ import time
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from .catchup import Catchup, ProviderRequestError
+from .imdb import IMDbChart
 
 REFRESH_SECONDS = 6 * 3600
 PAGE_SIZE = 60
@@ -56,6 +57,10 @@ class VOD:
         self.provider = provider or Catchup(store)
         self.lock = threading.RLock()
         self.failed = {}
+        self.chart = IMDbChart(store)
+        self.closed = threading.Event()
+        self.jobs_lock = threading.Lock()
+        self.workers, self.sync_errors, self.sync_retry = {}, {}, {}
         with store.connect() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS vod_items (
@@ -90,6 +95,92 @@ class VOD:
     def check(self, configuration):
         if self.provider.configuration() != configuration:
             raise ValueError('De providerinstellingen zijn gewijzigd. Open het aanbod opnieuw.')
+
+    def selection(self, kind):
+        raw = self.store.setting('mobile_vod_selection:'+self.configuration()[2], '')
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw).get(kind, [])
+            return [str(i) for i in value] if isinstance(value, list) else []
+        except (ValueError, AttributeError):
+            return []
+
+    def settings(self, refresh=False):
+        configuration = self.configuration()
+        result = {'kinds': {}, 'imdb_count': len(self.chart.entries())}
+        for kind, action in [('movie', 'get_vod_categories'), ('series', 'get_series_categories')]:
+            with self.store.connect() as db:
+                known = db.execute('SELECT id,name FROM vod_categories WHERE signature=? AND kind=? ORDER BY name COLLATE NOCASE', (configuration[2], kind)).fetchall()
+            if refresh or not known:
+                categories = self.provider.request(configuration, action)
+                if not isinstance(categories, list):
+                    raise ValueError('De provider stuurde geen bruikbare categorieën.')
+                self._save_categories(configuration, kind, categories)
+                with self.store.connect() as db:
+                    known = db.execute('SELECT id,name FROM vod_categories WHERE signature=? AND kind=? ORDER BY name COLLATE NOCASE', (configuration[2], kind)).fetchall()
+            selected = self.selection(kind)
+            result['kinds'][kind] = {'configured': selected is not None,
+                                    'categories': [dict(row, enabled=selected is None or row['id'] in selected) for row in known]}
+        return result
+
+    def save_selection(self, selections):
+        if not isinstance(selections, dict) or set(selections) != {'movie', 'series'}:
+            raise ValueError('Sla films en series afzonderlijk op.')
+        configuration = self.configuration()
+        normalized = {}
+        with self.store.connect() as db:
+            for kind in ('movie', 'series'):
+                values = selections[kind]
+                allowed = {row[0] for row in db.execute('SELECT id FROM vod_categories WHERE signature=? AND kind=?', (configuration[2], kind))}
+                if not isinstance(values, list) or any(not isinstance(v, str) or v not in allowed for v in values):
+                    raise ValueError('Onbekende categorie; haal de beheerlijst opnieuw op.')
+                normalized[kind] = list(dict.fromkeys(values))
+            self.check(configuration)
+            db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',
+                       ('mobile_vod_selection:'+configuration[2], json.dumps(normalized)))
+        for kind in ('movie', 'series'):
+            self.start_sync(kind)
+
+    def start_sync(self, kind):
+        selected = self.selection(kind)
+        if selected is None or not selected or self.closed.is_set():
+            return
+        with self.jobs_lock:
+            if kind in self.workers or self.sync_retry.get(kind, 0) > time.monotonic():
+                return
+            configuration = self.configuration()
+            def run():
+                errors = 0
+                try:
+                    for category in selected:
+                        if self.closed.is_set() or self.provider.configuration() != configuration or self.selection(kind) != selected:
+                            return
+                        try:
+                            notice, _ = self._refresh(configuration, kind, category)
+                            if notice:
+                                errors += 1
+                        except Exception:
+                            errors += 1
+                    self.sync_errors[kind] = errors
+                finally:
+                    with self.jobs_lock:
+                        self.workers.pop(kind, None)
+                        self.sync_retry[kind] = time.monotonic() + (60 if errors else 30)
+            worker = threading.Thread(target=run, daemon=True)
+            self.workers[kind] = worker
+            worker.start()
+
+    def close(self):
+        self.closed.set()
+
+    def account_allowed(self, row):
+        if row['kind'] == 'episode':
+            self._item(self.configuration(), 'series', row['category'])
+            return
+        selected = self.selection(row['kind'])
+        if selected is not None and row['category'] not in selected:
+            raise ValueError('Deze categorie is niet vrijgegeven voor mobiel.')
 
     def _save_categories(self, configuration, kind, categories):
         self.check(configuration)
@@ -154,7 +245,7 @@ class VOD:
                     continue
                 data = {'id': key, 'kind': kind, 'title': title, 'category': str(item.get('category_id') or category),
                         'year': clean(item.get('year') or str(item.get('releaseDate') or item.get('release_date') or '')[:4], 10),
-                        'rating': clean(item.get('rating'), 10)}
+                        'rating': clean(item.get('rating'), 10), 'imdb_id': clean(item.get('imdb_id') or item.get('imdb'), 20)}
                 rows[key] = (signature, kind, key, str(item.get('category_id') or category), title, title.casefold(),
                              cover(item.get('stream_icon') if kind == 'movie' else item.get('cover')),
                              extension(item.get('container_extension')), json.dumps(data))
@@ -191,35 +282,71 @@ class VOD:
                          '&v='+hashlib.sha256((row['signature']+row['cover']).encode()).hexdigest()[:12]) if row['cover'] else ''
         return item
 
-    def catalog(self, kind, category='', query='', offset=0):
+    def catalog(self, kind, category='', query='', offset=0, sort='title'):
         self.kind(kind)
+        if sort not in ('title', 'rating', 'imdb250') or (kind != 'movie' and sort == 'imdb250'):
+            raise ValueError('Ongeldige sorteervolgorde.')
         configuration = self.configuration()
+        selected = self.selection(kind)
         offset = max(0, int(offset))
-        with self.lock:
-            notice, requires_category = self._refresh(configuration, kind, str(category))
-            self.check(configuration)
-            where, args = 'signature=? AND kind=?', [configuration[2], kind]
-            if requires_category:
-                where += ' AND 0'
-            if category:
-                where += ' AND category=?'
-                args.append(str(category))
-            if query.strip():
-                where += ' AND instr(search,?)>0'
-                args.append(query.strip().casefold()[:300])
-            with self.store.connect() as db:
-                categories = [dict(row) for row in db.execute('SELECT id,name FROM vod_categories WHERE signature=? AND kind=? ORDER BY name COLLATE NOCASE', (configuration[2], kind))]
-                total = db.execute('SELECT count(*) FROM vod_items WHERE '+where, args).fetchone()[0]
-                rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY title COLLATE NOCASE,id LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
-            return {'items': [self.public(row) for row in rows], 'categories': categories,
-                    'total': total, 'offset': offset, 'limit': PAGE_SIZE, 'notice': notice,
-                    'signature': configuration[2][:16], 'requires_category': requires_category}
+        loading = False
+        if selected is None:
+            with self.lock:
+                notice, requires_category = self._refresh(configuration, kind, str(category))
+        else:
+            if category and category not in selected:
+                raise ValueError('Deze categorie is niet vrijgegeven voor mobiel.')
+            self.start_sync(kind)
+            loading = kind in self.workers
+            requires_category = False
+            notice = ('De gekozen categorieën worden op de achtergrond bijgewerkt.' if loading else
+                      'Sommige categorieën konden niet worden vernieuwd. Een nieuwe poging volgt automatisch.' if self.sync_errors.get(kind) else '')
+            if not selected:
+                notice = 'Er zijn nog geen categorieën vrijgegeven voor mobiel. Kies ze in het beheer.'
+        self.check(configuration)
+        where, args = 'signature=? AND kind=?', [configuration[2], kind]
+        if requires_category:
+            where += ' AND 0'
+        if selected is not None:
+            where += ' AND category IN ('+','.join('?' for _ in selected)+')' if selected else ' AND 0'
+            args.extend(selected)
+        if category:
+            where += ' AND category=?'
+            args.append(str(category))
+        if query.strip():
+            where += ' AND instr(search,?)>0'
+            args.append(query.strip().casefold()[:300])
+        if sort == 'imdb250':
+            self.chart.refresh()
+            notice = ' '.join(filter(None, [notice, self.chart.notice]))
+        with self.store.connect() as db:
+            db.create_function('imdb_rank', 1, self.chart.ranker())
+            ordering = 'title COLLATE NOCASE,id'
+            if sort == 'rating':
+                ordering = "CAST(replace(COALESCE(json_extract(data,'$.rating'),''),',','.') AS REAL) DESC,"+ordering
+            elif sort == 'imdb250':
+                where += ' AND imdb_rank(data) IS NOT NULL'
+                ordering = 'imdb_rank(data),'+ordering
+            categories = [dict(row) for row in db.execute('SELECT id,name FROM vod_categories WHERE signature=? AND kind=? ORDER BY name COLLATE NOCASE', (configuration[2], kind))
+                          if selected is None or row['id'] in selected]
+            total = db.execute('SELECT count(*) FROM vod_items WHERE '+where, args).fetchone()[0]
+            rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY '+ordering+' LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
+        items = [self.public(row) for row in rows]
+        if sort == 'imdb250':
+            ranker = self.chart.ranker()
+            for item, row in zip(items, rows):
+                item['imdb_rank'] = ranker(row['data'])
+        return {'items': items, 'categories': categories,
+                'total': total, 'offset': offset, 'limit': PAGE_SIZE, 'notice': notice,
+                'signature': configuration[2][:16], 'requires_category': requires_category,
+                'loading': loading, 'allowed_categories': selected}
 
     def _item(self, configuration, kind, key):
         with self.store.connect() as db:
             row = db.execute('SELECT * FROM vod_items WHERE signature=? AND kind=? AND id=?', (configuration[2], kind, key)).fetchone()
         if not row:
             raise ValueError('Deze film of serie staat niet meer in het aanbod. Open het overzicht opnieuw.')
+        self.account_allowed(row)
         return row
 
     def detail(self, kind, key):
@@ -245,6 +372,7 @@ class VOD:
                                 director=clean(info.get('director'), 300), duration=duration(info))
                     data['year'] = clean(info.get('releasedate') or info.get('releaseDate') or info.get('release_date') or data.get('year'), 10)[:4]
                     data['rating'] = clean(info.get('rating') or data.get('rating'), 10)
+                    data['imdb_id'] = clean(info.get('imdb_id') or info.get('imdb') or data.get('imdb_id'), 20)
                     episodes = []
                     episode_rows = []
                     if kind == 'series':
@@ -289,6 +417,11 @@ class VOD:
                     notice = 'De details konden niet worden vernieuwd. Je ziet de eerder opgehaalde informatie.'
             self.check(configuration)
             row = self._item(configuration, kind, key)
+            if data.get('imdb_id'):
+                base = json.loads(row['data'])
+                base['imdb_id'] = data['imdb_id']
+                with self.store.connect() as db:
+                    db.execute('UPDATE vod_items SET data=? WHERE signature=? AND kind=? AND id=?', (json.dumps(base), configuration[2], kind, key))
             return dict(data, cover=self.public(row)['cover'], notice=notice, signature=configuration[2][:16])
 
     def cover_url(self, kind, key):

@@ -1,5 +1,6 @@
 """One mobile HLS player; TV and recordings always have provider priority."""
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -34,6 +35,7 @@ class MobilePlayback:
 
     def _stop(self, session, state='stopped', message=''):
         session.update(state=state, message=message)
+        logging.getLogger('mijntv.stream').info('mobile_stopped kind=%s state=%s', session['kind'], state)
         process = session.get('process')
         if process and process.poll() is None:
             # Kill before giving a provider login to TV/recorder. No extra connection.
@@ -63,13 +65,27 @@ class MobilePlayback:
             name = unicodedata.normalize('NFKC', source.get('name', '')).upper()
             return bool(re.search(r'\b(?:4K|8K|UHD)\b', name)), bool(re.search(r'\b(?:HEVC|H265)\b', name))
         # Prefer manageable HD inputs over explicit 4K/HEVC versions on a phone.
+        free, reasons = [], []
         for source in sorted(candidates, key=cost):
             account = source.get('account', 'primary')
             if archive and account != 'primary':
                 continue
             key = self.streams.account_key(account)
+            reasons.append(account+(':busy' if key in occupied else ':cooldown' if self.avoid.get(key, 0) > now else ':available'))
+            if key not in occupied:
+                free.append((source, key))
             if key not in occupied and self.avoid.get(key, 0) <= now:
+                logging.getLogger('mijntv.stream').info('mobile_account_selected role=%s recovery=False', account)
                 return source, key
+        # Cooldown is a preference after failure, not a reservation. If all
+        # genuinely free accounts are cooling down, make a bounded retry.
+        if free:
+            source, key = min(free, key=lambda item: self.avoid.get(item[1], 0))
+            logging.getLogger('mijntv.stream').info('mobile_account_selected role=%s recovery=True', source.get('account', 'primary'))
+            return source, key
+        logging.getLogger('mijntv.stream').info('mobile_accounts_unavailable reasons=%s', ','.join(sorted(set(reasons))))
+        if archive:
+            raise RecordingConflict('Het hoofdaccount voor terugkijken is nu niet beschikbaar. De tv en opnames houden voorrang. Een vrij backupaccount kan dit archief niet overnemen.')
         raise RecordingConflict('Geen vrij kijkaccount voor deze zender. De tv en opnames houden voorrang. Probeer het later opnieuw.')
 
     def start(self, data):

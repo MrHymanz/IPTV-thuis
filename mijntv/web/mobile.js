@@ -55,7 +55,7 @@ function recordingRow(item, compact=false) {
   const saved=resume(item.id);
   const copy=element('span','recording-copy'); copy.append(element('span','small-muted',item.channel+' · '+date(item.start)),element('strong','',item.title));
   copy.append(element('p','',clock(item.start)+' – '+clock(item.end)),element('span','tag',playable&&saved?.position>10?'VERDER KIJKEN':item.status)); if(item.error) copy.append(element('p','',item.error));
-  main.append(element('span','recording-art',playable?'▶':'◷'),copy); row.append(main);
+  const art=element('span','recording-art',playable?'▶':'◷');if(playable){const img=element('img');img.alt='';img.loading='lazy';img.src='/api/mobile/recording-cover?id='+encodeURIComponent(item.id);let attempts=0;img.onerror=()=>{img.hidden=true;if(attempts++<2)setTimeout(()=>{if(img.isConnected)img.src='/api/mobile/recording-cover?id='+encodeURIComponent(item.id)+'&retry='+attempts;},5000);};img.onload=()=>img.hidden=false;art.append(img);}main.append(art,copy); row.append(main);
   if(!compact) { const actions=element('span','recording-actions');
     if(['queued','recording'].includes(item.state)) actions.append(action(item.state==='recording'?'Stoppen':'Annuleren',async()=>{ if(confirm('Deze opname '+(item.state==='recording'?'stoppen':'annuleren')+'?')) await mutate('/api/recordings/cancel',{id:item.id},'Opname geannuleerd.'); }));
     else actions.append(action('Verwijderen',async()=>{if(confirm('Opname “'+item.title+'” verwijderen?')) await mutate('/api/recordings/delete',{id:item.id},'Opname verwijderd.');}));
@@ -152,8 +152,8 @@ function openProgramme(p) {
 }
 // Films and series use separate server catalogues and category IDs.
 let vodKind='movie', vodItems=[], vodTotal=0, vodSignature='', vodGeneration=0, vodDetailGeneration=0;
-let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false;
-const vodState={movie:{category:'',query:''},series:{category:'',query:''}};
+let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false, vodAllowed=null, vodPollTimer;
+const vodState={movie:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-movie')||'title'},series:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-series')||'title'}};
 function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
 function vodKey(item) {return item.kind+':'+item.id;}
@@ -165,7 +165,7 @@ function vodPoster(item) {
 }
 function vodCard(item) {
   const row=action('',()=>openVodDetail(item),'vod-card');const poster=vodPoster(item);
-  if(item.rating)poster.append(element('b','vod-badge','★ '+item.rating));
+  if(item.imdb_rank)poster.append(element('b','vod-badge','#'+item.imdb_rank+' IMDb'));else if(item.rating)poster.append(element('b','vod-badge','★ '+item.rating));
   row.append(poster,element('strong','',item.title),element('span','small-muted',[item.year,item.kind==='series'?'Serie':'Film'].filter(Boolean).join(' · ')));
   if(item.position>10){const track=element('span','vod-progress'),fill=element('span');fill.style.width=(item.duration>0?Math.min(100,item.position/item.duration*100):0)+'%';track.append(fill);row.append(track);}
   return row;
@@ -173,9 +173,9 @@ function vodCard(item) {
 function renderVod() {
   const local=vodFilter==='saved'?vodLocal('saved'):vodLocal('history');
   const q=vodState[vodKind].query.toLocaleLowerCase('nl-NL').trim();
-  const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&i.title.toLocaleLowerCase('nl-NL').includes(q));
+  const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(vodAllowed===null||vodAllowed.includes(i.category))&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&i.title.toLocaleLowerCase('nl-NL').includes(q));
   $('vod-list').replaceChildren(...shown.map(vodCard));
-  if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':vodRequiresCategory?'Kies hierboven een bron of categorie. We halen het aanbod per categorie op.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
+  if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':vodRequiresCategory?'Kies hierboven een bron of categorie. We halen het aanbod per categorie op.':vodState[vodKind].sort==='imdb250'?'Geen gekoppelde IMDb Top 250-films in deze selectie. Controleer de ranglijst in het beheer.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
   $('vod-count').textContent=vodFilter==='all'&&vodRequiresCategory?'':(vodFilter==='all'?vodTotal:shown.length)+' titels';
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
   $('vod-more').hidden=vodFilter!=='all'||vodItems.length>=vodTotal;
@@ -183,23 +183,25 @@ function renderVod() {
   if(shown.length){const item=shown[0];$('vod-featured-art').replaceChildren(vodPoster(item));$('vod-featured-title').textContent=item.title;$('vod-featured-meta').textContent=[item.year,item.rating?'★ '+item.rating:''].filter(Boolean).join(' · ');$('vod-featured-tag').textContent=vodKind==='movie'?'UITGELICHT · FILM':'UITGELICHT · SERIE';$('vod-featured').onclick=()=>openVodDetail(item);}
   for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']]){const active=filter===vodFilter;$(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));}
 }
-async function loadVod(append=false) {
+async function loadVod(append=false,quiet=false) {
+  clearTimeout(vodPollTimer);
   const generation=++vodGeneration,kind=vodKind,state={...vodState[kind]};
   vodLoading=true;$('vod-more').disabled=true;$('vod-retry').hidden=true;$('vod-notice').textContent='';
-  if(!append){vodItems=[];$('vod-featured').hidden=true;$('vod-more').hidden=true;$('vod-count').textContent='';$('vod-list').replaceChildren(element('p','empty','Het aanbod van je provider wordt opgehaald…'));}
-  const params=new URLSearchParams({kind,category:state.category,q:state.query,offset:String(append?vodItems.length:0)});
+  if(!append&&!quiet){vodItems=[];$('vod-featured').hidden=true;$('vod-more').hidden=true;$('vod-count').textContent='';$('vod-list').replaceChildren(element('p','empty','Het aanbod van je provider wordt opgehaald…'));}
+  const params=new URLSearchParams({kind,category:state.category,q:state.query,sort:state.sort,offset:String(append?vodItems.length:0)});
   try {
     const result=await api('/api/mobile/vod?'+params);if(generation!==vodGeneration)return;
     if(append&&vodSignature&&vodSignature!==result.signature){vodItems=[];vodTotal=0;throw Error('Je provideraccount is gewijzigd. Open het aanbod opnieuw.');}
-    vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?vodItems.concat(result.items):result.items;vodTotal=result.total;
+    vodAllowed=result.allowed_categories??null;vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?[...new Map(vodItems.concat(result.items).map(i=>[i.id,i])).values()]:quiet&&vodItems.length>60?vodItems:result.items;vodTotal=result.total;
     const categories=[new Option(result.requires_category?'Kies een categorie':'Alle categorieën',''),...result.categories.map(c=>new Option(c.name,c.id))];
     if(state.category&&!result.categories.some(c=>c.id===state.category))categories.push(new Option('Eerdere categorie',state.category));
-    $('vod-category').replaceChildren(...categories);$('vod-category').value=state.category;$('vod-notice').textContent=result.notice||'';renderVod();
+    $('vod-category').replaceChildren(...categories);$('vod-category').value=state.category;$('vod-notice').textContent=result.notice||'';renderVod();if(result.loading)vodPollTimer=setTimeout(()=>{if(['#films','#series'].includes(location.hash)&&!document.hidden)loadVod(false,true);},5000);
   }catch(error){if(generation!==vodGeneration)return;$('vod-notice').textContent=error.message;$('vod-retry').hidden=false;if(!append)$('vod-list').replaceChildren(element('p','empty',error.message));}
   finally{if(generation===vodGeneration){vodLoading=false;$('vod-more').disabled=false;}}
 }
 function enterVod(kind) {
-  vodKind=kind;const series=kind==='series';$('vod-heading').textContent=series?'Nog één aflevering.':'Een avond voor jezelf.';$('vod-subtitle').textContent=series?'Een nieuw verhaal om in te verdwijnen.':'Grote verhalen. Gewoon bij jou thuis.';
+  vodKind=kind;const series=kind==='series';$('vod-heading').textContent=window.pickMobileCopy(series?'seriesHead':'filmsHead');$('vod-subtitle').textContent=window.pickMobileCopy(series?'seriesSub':'filmsSub');
+  $('vod-sort').replaceChildren(new Option('Alfabetisch A–Z','title'),new Option('Beste beoordeling (provider)','rating'),...(series?[]:[new Option('IMDb Top 250','imdb250')]));if(series&&vodState[kind].sort==='imdb250')vodState[kind].sort='title';$('vod-sort').value=vodState[kind].sort;
   $('vod-search').placeholder=series?'Zoek een serie':'Zoek een film';$('vod-search').setAttribute('aria-label',$('vod-search').placeholder);$('vod-search').value=vodState[kind].query;
   $('vod-category').replaceChildren(new Option('Alle categorieën',''));vodFilter='all';loadVod();
 }
@@ -259,12 +261,13 @@ function saveVodProgress(ended=false) {
 $('vod-search').oninput=()=>{vodState[vodKind].query=$('vod-search').value;clearTimeout(vodSearchTimer);vodGeneration++;vodLoading=false;vodSearchTimer=setTimeout(()=>loadVod(),300);};
 $('vod-category').onchange=()=>{vodState[vodKind].category=$('vod-category').value;loadVod();};
 for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']])$(id).onclick=()=>{vodFilter=filter;if(!vodLoading&&vodSignature)renderVod();};
+$('vod-sort').onchange=()=>{vodState[vodKind].sort=$('vod-sort').value;store(localStorage,'iptv-vod-sort-'+vodKind,$('vod-sort').value);loadVod();};
 $('vod-more').onclick=()=>loadVod(true);$('vod-retry').onclick=()=>loadVod();$('vod-season').onchange=renderVodEpisodes;
 $('vod-close').onclick=()=>{++vodDetailGeneration;$('vod-detail').close();};$('vod-detail').addEventListener('cancel',()=>{++vodDetailGeneration;});
 
 function showView() {
   const requested=location.hash.slice(1)||'home', view=['home','channels','recordings','guide','films','series'].includes(requested)?requested:'home';
-  const vod=['films','series'].includes(view);clearTimeout(vodSearchTimer);if(!vod)++vodGeneration;
+  const vod=['films','series'].includes(view);clearTimeout(vodSearchTimer);clearTimeout(vodPollTimer);if(!vod)++vodGeneration;
   document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==(vod?'vod':view)+'-view');
   document.querySelectorAll('.nav-button').forEach(e=>{const active=e.dataset.go===(vod?'home':view);e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   document.querySelectorAll('.media-tabs button').forEach(e=>{const active=e.dataset.go===(vod?view:'home');e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
@@ -399,3 +402,11 @@ window.addEventListener('pagehide',()=>{const token=player?.token;if(token)api('
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();if(player)checkPlayer(playerGeneration);}});
 $('greeting').textContent=new Date().getHours()<12?'Goedemorgen.':new Date().getHours()<18?'Goedemiddag.':'Goedenavond.';
 showView();load().then(()=>{if(location.hash==='#guide')loadGuide();});setInterval(()=>{if(!document.hidden)load();},30000);
+
+function applyMobileTheme() {const theme=$('mobile-theme').value;store(localStorage,'iptv-mobile-theme',theme);document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='dark'||(theme==='system'&&window.matchMedia?.('(prefers-color-scheme: dark)').matches)?'#142321':'#f7f7f2';}
+$('mobile-theme').value=['light','dark','system'].includes(stored(localStorage,'iptv-mobile-theme'))?stored(localStorage,'iptv-mobile-theme'):'system';$('mobile-theme').onchange=applyMobileTheme;applyMobileTheme();
+
+function rotateMobileCopy(){document.querySelectorAll('[data-copy]').forEach(e=>e.textContent=window.pickMobileCopy(e.dataset.copy));if(['#films','#series'].includes(location.hash)){$('vod-heading').textContent=window.pickMobileCopy(vodKind==='series'?'seriesHead':'filmsHead');$('vod-subtitle').textContent=window.pickMobileCopy(vodKind==='series'?'seriesSub':'filmsSub');}}
+rotateMobileCopy();setInterval(()=>{if(!document.hidden)rotateMobileCopy();},120000);
+
+const themeMedia=window.matchMedia?.('(prefers-color-scheme: dark)');themeMedia?.addEventListener?.('change',()=>{if($('mobile-theme').value==='system')applyMobileTheme();});

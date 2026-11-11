@@ -223,6 +223,31 @@ class MobileTests(unittest.TestCase):
         self.assertFalse(tv.closed)
         self.process.assert_not_called()
 
+    def test_free_accounts_in_error_cooldown_are_retried_instead_of_reported_busy(self):
+        first = self.play()
+        self.mobile._stop(self.mobile.sessions[first['token']], 'error')
+        second = self.play(session=first['token'])
+        self.assertEqual(self.mobile.sessions[second['token']]['account'], self.hub.account_key('backup'))
+        self.mobile._stop(self.mobile.sessions[second['token']], 'error')
+        with self.assertLogs('mijntv.stream', level='INFO') as captured:
+            third = self.play(session=second['token'], retry=True)
+        self.assertEqual(third['state'], 'loading')
+        self.assertIn('recovery=True', ' '.join(captured.output))
+        self.assertNotIn('secret', ' '.join(captured.output))
+
+    def test_cooldown_retry_never_takes_a_tv_account(self):
+        tv = self.tv()
+        key = self.hub.account_key('backup')
+        self.mobile.avoid[key] = time.monotonic()+45
+        result = self.play()
+        self.assertEqual(self.mobile.sessions[result['token']]['account'], key)
+        self.assertFalse(tv.closed)
+
+    def test_archive_restriction_explains_why_a_free_backup_cannot_be_used(self):
+        self.tv()
+        with self.assertRaisesRegex(RecordingConflict, 'backupaccount kan dit archief niet overnemen'):
+            self.mobile._source(self.channel, archive=True)
+
     def test_episode_uses_selected_series_episode_and_actual_duration(self):
         signature = self.vod_fixture()
         self.mobile.vod.catalog('series')

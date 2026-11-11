@@ -286,3 +286,20 @@ $('backup-remove').onclick = () => {
   if (confirm('Backupaccount verwijderen? Je oorspronkelijke account en favorieten blijven behouden.'))
     mutate('/api/backup-account', {url:''}, 'Backupaccount verwijderd.');
 };
+
+let mobileLibraryBusy=false;
+async function loadMobileLibrary() {
+  if(mobileLibraryBusy)return;mobileLibraryBusy=true;$('mobile-library-status').textContent='Categorieën ophalen…';
+  try{const result=await api('/api/mobile-library?refresh=1');
+    for(const kind of ['movie','series']){
+      const rows=result.kinds[kind].categories.map(item=>{const label=document.createElement('label');label.className='library-group';label.dataset.name=item.name.toLocaleLowerCase('nl-NL');const input=document.createElement('input');input.type='checkbox';input.value=item.id;input.checked=item.enabled;label.append(input,document.createTextNode(item.name));return label;});$('mobile-library-'+kind).replaceChildren(...rows);
+    }
+    $('mobile-library-form').hidden=false;$('mobile-library-status').textContent='Selecteer je mobiele aanbod. '+result.imdb_count+' IMDb-titels opgeslagen.';
+  }catch(error){$('mobile-library-status').textContent=error.message;}finally{mobileLibraryBusy=false;}
+}
+$('mobile-library-load').onclick=loadMobileLibrary;
+$('panel-mobile-library').addEventListener('toggle',()=>{if($('panel-mobile-library').open&&$('mobile-library-form').hidden)loadMobileLibrary();});
+for(const kind of ['movie','series'])$('mobile-library-'+kind+'-search').oninput=()=>{const q=$('mobile-library-'+kind+'-search').value.toLocaleLowerCase('nl-NL');$('mobile-library-'+kind).querySelectorAll('label').forEach(row=>row.hidden=!row.dataset.name.includes(q));};
+document.querySelectorAll('[data-library-select]').forEach(b=>b.onclick=()=>{const [kind,mode]=b.dataset.librarySelect.split(':');$('mobile-library-'+kind).querySelectorAll('input').forEach(input=>input.checked=mode==='all');});
+$('mobile-library-form').onsubmit=async event=>{event.preventDefault();const selection={};for(const kind of ['movie','series'])selection[kind]=[...$('mobile-library-'+kind).querySelectorAll('input:checked')].map(i=>i.value);try{await api('/api/mobile-library',{selection});$('mobile-library-status').textContent='Opgeslagen. De geselecteerde categorieën worden op de achtergrond verzameld.';}catch(error){$('mobile-library-status').textContent=error.message;}};
+$('imdb-import-form').onsubmit=async event=>{event.preventDefault();try{const entries=JSON.parse($('imdb-import').value);const result=await api('/api/mobile-library/imdb',{entries});message(result.count+' IMDb-titels geïmporteerd.');}catch(error){message(error.message,true);}};

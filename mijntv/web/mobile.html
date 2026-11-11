@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f7f7f2"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="IPTV thuis">
 <title>IPTV thuis · mobiel</title>
-<link rel="stylesheet" href="/mobile.css"><script src="/hls.min.js" defer></script><script src="/mobile.js" defer></script>
+<link rel="stylesheet" href="/mobile.css"><script src="/hls.min.js" defer></script><script src="/mobile-copy.js" defer></script><script src="/mobile.js" defer></script>
 </head>
 <body>
 <div class="app">
@@ -13,29 +13,29 @@
 <p id="connection-message" class="notice" role="status" hidden></p>
 <div class="media-tabs" aria-label="Kies aanbod"><button data-go="home" class="active">Live tv</button><button data-go="films">Films</button><button data-go="series">Series</button></div>
 <section id="home-view" class="view">
-<div class="greeting"><p class="eyebrow">JOUW TELEVISIE, BINNEN HANDBEREIK</p><h1 id="greeting">Welkom thuis.</h1><p>Een goed moment om even te kijken.</p></div>
+<div class="greeting"><p class="eyebrow">JOUW TELEVISIE, BINNEN HANDBEREIK</p><h1 id="greeting">Welkom thuis.</h1><p data-copy="greeting">Een goed moment om even te kijken.</p></div>
 <button class="hero" id="featured" disabled><span class="hero-grid" aria-hidden="true"></span><span class="hero-top"><span class="tag light"><span class="live-dot"></span> NU LIVE</span><span id="hero-logo" class="hero-logo"></span></span><span class="hero-bottom"><span id="hero-channel" class="hero-meta">Je favorieten laden…</span><strong id="hero-title">Jouw tv. Ook hier.</strong><span id="hero-time" class="hero-description"></span><span class="hero-track"><span id="hero-progress"></span></span><span class="watch-pill"><span aria-hidden="true">▶</span> Live kijken</span></span></button>
 <div class="section-heading"><h2>Nu op tv <span class="live-dot"></span></h2><button class="text-button" data-go="channels">Alle zenders ↗</button></div>
 <div id="home-channels" class="channel-list"><p class="empty">Je zenders worden opgehaald…</p></div>
-<div class="section-heading"><h2>Voor een rustig moment</h2><button class="text-button" data-go="recordings">Opnames ↗</button></div><div id="home-recordings"></div>
+<div class="section-heading"><h2 data-copy="recordingsHeading">Voor een rustig moment</h2><button class="text-button" data-go="recordings">Opnames ↗</button></div><div id="home-recordings"></div>
 <div class="connection-card"><span class="connection-dot"></span><p><strong>Verbonden met je mediacenter</strong><span>Thuis via wifi, onderweg via je WireGuard-VPN.</span></p></div>
 </section>
 <section id="channels-view" class="view" hidden>
-<p class="eyebrow">ALLES BINNEN HANDBEREIK</p><h1>Jouw zenders.</h1><p class="subtitle">Je vertrouwde favorieten, in je hand.</p>
+<p class="eyebrow">ALLES BINNEN HANDBEREIK</p><h1>Jouw zenders.</h1><p class="subtitle" data-copy="channelsSub">Je vertrouwde favorieten, in je hand.</p>
 <label class="search"><span aria-hidden="true">⌕</span><input id="channel-search" type="search" placeholder="Zoek een zender of programma" autocomplete="off" aria-label="Zoek een zender of programma"></label>
 <div class="chips" id="filters" aria-label="Filter zenders"><button class="chip active" data-filter="Alles" aria-pressed="true">Alles</button><button class="chip" data-filter="Nieuws" aria-pressed="false">Nieuws</button><button class="chip" data-filter="Sport" aria-pressed="false">Sport</button><button class="chip" data-filter="Film" aria-pressed="false">Film</button><button class="chip" data-filter="Muziek" aria-pressed="false">Muziek</button></div>
 <div class="section-heading"><h2>Live kijken <span class="live-dot"></span></h2><span class="small-muted" id="channel-count"></span></div>
 <div id="all-channels" class="channel-list"></div><p id="empty-search" class="empty" hidden>Geen zenders gevonden. Probeer een andere zoekterm.</p>
 </section>
 <section id="recordings-view" class="view" hidden>
-<p class="eyebrow">BEWAARD VOOR EEN GOED MOMENT</p><h1>Jouw opnames.</h1><p class="subtitle">Kijk wanneer het jou uitkomt.</p>
+<p class="eyebrow">BEWAARD VOOR EEN GOED MOMENT</p><h1>Jouw opnames.</h1><p class="subtitle" data-copy="recordingsSub">Kijk wanneer het jou uitkomt.</p>
 <div class="storage"><span class="storage-icon" aria-hidden="true">▤</span><div><strong>Ruimte voor meer verhalen</strong><span id="storage-text">Opslag wordt opgehaald…</span><span class="storage-track"><span id="storage-progress"></span></span></div></div>
 <div class="chips" id="recording-filters"><button class="chip active" data-recording-filter="saved" aria-pressed="true">Opgenomen</button><button class="chip" data-recording-filter="planned" aria-pressed="false">Gepland & bezig</button></div>
 <div class="section-heading"><h2 id="recordings-heading">Opgenomen</h2><span class="small-muted" id="recording-count"></span></div><div id="recordings-list"></div>
-<div class="quiet-note"><span aria-hidden="true">◷</span><p><strong>Later komt ook goed uit.</strong><br>Plan een opname vanuit de gids.</p><button class="text-button" data-go="guide">Open gids ↗</button></div>
+<div class="quiet-note"><span aria-hidden="true">◷</span><p><strong data-copy="quietHeading">Later komt ook goed uit.</strong><br>Plan een opname vanuit de gids.</p><button class="text-button" data-go="guide">Open gids ↗</button></div>
 </section>
 <section id="guide-view" class="view" hidden>
-<p class="eyebrow">NU, STRAKS EN NOG EEN KEER</p><h1>Een goed programma.</h1><p class="subtitle">Kijk terug of bewaar iets voor later.</p>
+<p class="eyebrow">NU, STRAKS EN NOG EEN KEER</p><h1>Een goed programma.</h1><p class="subtitle" data-copy="guideSub">Kijk terug of bewaar iets voor later.</p>
 <label class="guide-select" for="guide-channel">Kies een zender<select id="guide-channel"></select></label>
 <div class="chips" id="guide-days"><button class="chip" data-day="-1" aria-pressed="false">Gisteren</button><button class="chip active" data-day="0" aria-pressed="true">Vandaag</button><button class="chip" data-day="1" aria-pressed="false">Morgen</button></div>
 <div class="section-heading"><h2 id="guide-heading">Vandaag</h2><button id="guide-refresh" class="text-button">Verversen ↻</button></div><p id="guide-notice" class="small-muted"></p><div id="guide-list"></div>
@@ -45,6 +45,7 @@
 <button class="vod-featured" id="vod-featured" hidden><span id="vod-featured-art" class="vod-featured-art"></span><span class="vod-featured-copy"><span class="tag light" id="vod-featured-tag">UITGELICHT</span><strong id="vod-featured-title"></strong><span id="vod-featured-meta"></span><span class="watch-pill">▶ &nbsp; Bekijk details</span></span></button>
 <label class="search"><span aria-hidden="true">⌕</span><input id="vod-search" type="search" placeholder="Zoek een film" autocomplete="off" aria-label="Zoek een film"></label>
 <label class="guide-select" for="vod-category">Bron of categorie<select id="vod-category"><option value="">Alle categorieën</option></select></label>
+<label class="guide-select" for="vod-sort">Sorteren<select id="vod-sort"><option value="title">Alfabetisch A–Z</option><option value="rating">Beste beoordeling</option><option value="imdb250">IMDb Top 250</option></select></label>
 <div class="chips vod-filters" aria-label="Bibliotheek"><button class="chip active" id="vod-all" aria-pressed="true">Alles ontdekken</button><button class="chip" id="vod-saved" aria-pressed="false">♡ Mijn kijklijst</button><button class="chip" id="vod-continue" aria-pressed="false">Verder kijken</button></div>
 <div class="section-heading"><h2 id="vod-list-heading">Ontdek iets moois</h2><span class="small-muted" id="vod-count"></span></div>
 <p id="vod-notice" class="small-muted" role="status"></p><div id="vod-list" class="vod-grid" aria-live="polite"></div><button id="vod-more" class="primary-button vod-more" hidden>Meer laden</button><button id="vod-retry" class="primary-button" hidden>Opnieuw proberen</button>
@@ -63,6 +64,6 @@
 </dialog>
 <dialog id="programme" aria-labelledby="programme-title"><div class="programme-content"><button id="close-programme" class="icon-button close-corner" aria-label="Sluiten">✕</button><p id="programme-meta" class="eyebrow"></p><h2 id="programme-title"></h2><p id="programme-time" class="small-muted"></p><p id="programme-description"></p><div id="programme-actions"></div></div></dialog>
 <dialog id="vod-detail" aria-labelledby="vod-detail-title"><div class="programme-content"><button id="vod-close" class="icon-button close-corner" aria-label="Sluiten">✕</button><p class="eyebrow" id="vod-detail-kind"></p><div id="vod-detail-cover" class="vod-detail-cover"></div><h2 id="vod-detail-title"></h2><p id="vod-detail-meta" class="small-muted"></p><p id="vod-detail-description"></p><p id="vod-detail-cast" class="small-muted"></p><p id="vod-detail-notice" class="small-muted" role="status"></p><div id="vod-detail-actions"></div><div id="vod-seasons" hidden><label class="guide-select" for="vod-season">Seizoen<select id="vod-season"></select></label><div id="vod-episodes"></div></div></div></dialog>
-<dialog id="about-dialog" aria-labelledby="about-title"><div class="about-content"><span class="brand-mark">tv<span>•</span></span><h2 id="about-title">Je eigen tv.<br>Ook op je telefoon.</h2><p>Je kijkt via je mediacenter. Buiten je thuisnetwerk zet je eerst je WireGuard-VPN aan.</p><p>De tv en opnames houden voorrang. Voor mobiel kiezen we automatisch een vrij kijkaccount. Je IPTV-wachtwoorden blijven op het mediacenter.</p><p id="version" class="small-muted"></p><a class="settings-link" href="/admin">Open beheer ↗</a><button id="close-about" class="primary-button">Terug naar mijn tv</button></div></dialog>
+<dialog id="about-dialog" aria-labelledby="about-title"><div class="about-content"><span class="brand-mark">tv<span>•</span></span><h2 id="about-title">Je eigen tv.<br>Ook op je telefoon.</h2><p>Je kijkt via je mediacenter. Buiten je thuisnetwerk zet je eerst je WireGuard-VPN aan.</p><p>De tv en opnames houden voorrang. Voor mobiel kiezen we automatisch een vrij kijkaccount. Je IPTV-wachtwoorden blijven op het mediacenter.</p><label class="guide-select" for="mobile-theme">Weergave<select id="mobile-theme"><option value="system">Systeeminstelling</option><option value="light">Licht</option><option value="dark">Donker</option></select></label><p id="version" class="small-muted"></p><a class="settings-link" href="/admin">Open beheer ↗</a><button id="close-about" class="primary-button">Terug naar mijn tv</button></div></dialog>
 <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
 </body></html>

@@ -100,7 +100,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         with patch.object(self.server.vod, 'catalog', return_value={'items': [], 'categories': []}) as catalog:
             self.assertEqual(self.request('GET', '/api/mobile/vod?kind=series&category=12&q=Test&offset=60')[0], 200)
-            catalog.assert_called_once_with('series', '12', 'Test', '60')
+            catalog.assert_called_once_with('series', '12', 'Test', '60', 'title')
         with patch.object(self.server.vod, 'detail', return_value={'title': 'Testserie'}) as detail:
             self.assertEqual(self.request('GET', '/api/mobile/vod/detail?kind=series&id=7')[0], 200)
             detail.assert_called_once_with('series', '7')
@@ -113,6 +113,22 @@ class ServerTests(unittest.TestCase):
             status, body = self.request('GET', '/api/mobile/vod')
             self.assertEqual(status, 400)
             self.assertIn(b'Xtream', body)
+
+    def test_mobile_library_and_recording_covers_require_authentication_and_csrf_header(self):
+        for path in ('/api/mobile-library', '/api/mobile/recording-cover?id=one', '/mobile-copy.js'):
+            self.assertEqual(self.request('GET', path, auth=False)[0], 401)
+        self.assertEqual(self.request('GET', '/mobile-copy.js')[0], 200)
+        with patch.object(self.server.vod, 'save_selection') as save:
+            data = {'selection': {'movie': ['1'], 'series': []}}
+            self.assertEqual(self.request('POST', '/api/mobile-library', data, custom=False)[0], 403)
+            self.assertEqual(self.request('POST', '/api/mobile-library', data, origin='https://other.test')[0], 403)
+            save.assert_not_called()
+            self.assertEqual(self.request('POST', '/api/mobile-library', data)[0], 200)
+            save.assert_called_once_with(data['selection'])
+        with patch.object(self.server.thumbnails, 'get', return_value=b'\xff\xd8\xfffixture'):
+            self.assertEqual(self.request('GET', '/api/mobile/recording-cover?id=one'), (200, b'\xff\xd8\xfffixture'))
+        with patch.object(self.server.vod, 'settings', side_effect=ValueError('Stel je Xtream-login in.')):
+            self.assertIn(b'Xtream', self.request('GET', '/api/mobile-library')[1])
 
     def test_mobile_video_and_controls_require_authentication_and_same_origin(self):
         with patch.object(self.server.mobile,'start',return_value={'token':'session','playlist':'/api/mobile/hls/session/index.m3u8'}) as start:
