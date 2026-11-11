@@ -1,7 +1,9 @@
 import io
+import hashlib
 import json
 import tempfile
 import unittest
+import time
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
@@ -59,6 +61,16 @@ class ArtworkTests(unittest.TestCase):
             self.art.fallback('movie', '7')
         self.assertEqual(request.call_args.kwargs['query'], 'THE DARK KNIGHT')
         self.assertEqual(request.call_args.kwargs['primary_release_year'], '2008')
+        self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/correct.jpg')
+
+    def test_failed_search_from_before_prefix_fix_does_not_hide_new_matches(self):
+        identity = ['provider-signature', 'movie', '7', self.item['title'], self.item['year'], self.item['tmdb_id'], self.item['imdb_id'], KEY]
+        old_key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        with self.store.connect() as db:
+            db.execute('INSERT INTO tmdb_artwork VALUES (?,?,?)', (old_key, '{}', time.time()+86400))
+        with patch.object(self.art, 'request', return_value={'poster_path': '/correct.jpg'}) as request:
+            self.art.fallback('movie', '7')
+            request.assert_called_once()
         self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/correct.jpg')
 
     def test_ambiguous_matches_and_missing_images_are_negatively_cached(self):

@@ -132,7 +132,7 @@ class Artwork:
         key = self.store.setting('tmdb_key')
         if not key:
             raise ValueError('TMDB is niet ingesteld.')
-        identity = [configuration[2], kind, str(identifier), item.get('title'), item.get('year'), item.get('tmdb_id'), item.get('imdb_id'), key]
+        identity = ['tmdb-match-v2', configuration[2], kind, str(identifier), item.get('title'), item.get('year'), item.get('tmdb_id'), item.get('imdb_id'), key]
         cache_key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with self.lock:
             lock = self.locks.setdefault(cache_key, threading.Lock())
