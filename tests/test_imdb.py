@@ -26,6 +26,7 @@ class IMDbTests(unittest.TestCase):
         ranker = self.chart.ranker()
         self.assertEqual(ranker(json.dumps({'title': 'Andere titel', 'imdb_id': 'tt0000001'})), 1)
         self.assertEqual(ranker(json.dumps({'title': 'NL| First & Last (1994) HD', 'year': '1994'})), 1)
+        self.assertEqual(ranker(json.dumps({'title': 'NL - FIRST & LAST 4K (1994)'})), 1)
         self.assertIsNone(ranker(json.dumps({'title': 'First & Last', 'year': '2020'})))
         self.assertIsNone(ranker(json.dumps({'title': 'Niet in de lijst', 'rating': '10'})))
 

@@ -52,6 +52,15 @@ class ArtworkTests(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs['primary_release_year'], '2020')
         self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/correct.jpg')
 
+    def test_provider_hyphen_prefix_and_4k_label_are_removed_for_real_world_titles(self):
+        self.item.update(title='NL - THE DARK KNIGHT 4K (2008)', year='', tmdb_id='')
+        response = {'results': [{'title': 'The Dark Knight', 'release_date': '2008-07-16', 'poster_path': '/correct.jpg'}]}
+        with patch.object(self.art, 'request', return_value=response) as request:
+            self.art.fallback('movie', '7')
+        self.assertEqual(request.call_args.kwargs['query'], 'THE DARK KNIGHT')
+        self.assertEqual(request.call_args.kwargs['primary_release_year'], '2008')
+        self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/correct.jpg')
+
     def test_ambiguous_matches_and_missing_images_are_negatively_cached(self):
         self.item.update(title='A Film', year='', tmdb_id='')
         data = {'results': [{'title': 'A Film', 'release_date': '1990', 'poster_path': '/old.jpg'},

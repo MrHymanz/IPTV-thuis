@@ -21,7 +21,7 @@ def image_url(path, asset):
 
 
 def search_title(title):
-    title = re.sub(r'^\s*[A-Z]{2,3}\s*[|:]\s*', '', title)
+    title = re.sub(r'^\s*[A-Z]{2,3}\s*[|:\-]\s*', '', title)
     return re.sub(r'\(\d{4}\)|\b(?:FHD|UHD|HD|4K|1080p|720p)\b', '', title, flags=re.I).strip()
 
 

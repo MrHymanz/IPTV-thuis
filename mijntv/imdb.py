@@ -12,7 +12,7 @@ API_URL = 'https://imdb-top250.mmdju.workers.dev/top250'
 
 
 def title_key(value):
-    value = re.sub(r'^\s*[A-Z]{2,3}\s*[|:]\s*', '', value)
+    value = re.sub(r'^\s*[A-Z]{2,3}\s*[|:\-]\s*', '', value)
     value = re.sub(r'\([^)]*\d{4}[^)]*\)|\b(?:FHD|UHD|HD|4K|1080p|720p)\b', '', value, flags=re.I)
     return re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode().lower())
 
