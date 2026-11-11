@@ -50,7 +50,7 @@ class ServerTests(unittest.TestCase):
         return status, result
 
     def test_admin_requires_auth_including_static_files(self):
-        for path in ('/admin', '/admin.js', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/hls.min.js', '/api/mobile/status', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
+        for path in ('/admin', '/admin.js', '/theme.js', '/theme.css', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/hls.min.js', '/api/mobile/status', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
@@ -86,7 +86,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'href="/admin"', html)
 
     def test_mobile_frontend_is_served(self):
-        for path in ('/mobile', '/mobile/', '/mobile.js', '/mobile.css'):
+        for path in ('/mobile', '/mobile/', '/mobile.js', '/mobile.css', '/theme.js', '/theme.css'):
             status, body = self.request('GET', path)
             self.assertEqual(status, 200)
             self.assertTrue(body)
@@ -94,6 +94,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'viewport-fit=cover', html)
         self.assertIn(b'src="/mobile.js"', html)
         self.assertIn(b'href="/mobile.css"', html)
+        self.assertIn(b'src="/theme.js"', html)
+        self.assertIn(b'href="/theme.css"', html)
 
     def test_mobile_vod_routes_require_auth_and_keep_covers_on_server(self):
         for path in ('/api/mobile/vod', '/api/mobile/vod/detail', '/api/mobile/vod/cover'):

@@ -39,7 +39,7 @@ In **Beheer → Mobiele films en series** kun je per onderdeel kiezen welke prov
 
 ## Weergave en thumbnails
 
-Bij het tandwiel in de mobiele site kies je **Systeeminstelling**, **Licht** of **Donker**. De keuze wordt in de lokale browseropslag bewaard. Alleen algemene introductieteksten en kopjes wisselen bij een bezoek en iedere twee minuten tussen ruim honderd varianten; programmanamen, afleveringen en statusmeldingen blijven letterlijk weergegeven. Dezelfde tekst wordt niet twee keer achter elkaar uit dezelfde groep gekozen.
+Bij het tandwiel in de mobiele site kies je **Systeeminstelling**, **Licht** of **Donker**. De keuze wordt in de lokale browseropslag bewaard en gedeeld met het beheer op hetzelfde adres. Bovenaan het beheer staat dezelfde keuze voor Systeem, Licht en Donker. Een wijziging wordt ook in andere geopende tabs doorgevoerd. Beide interfaces gebruiken één kleurenpalet; het thema wordt vóór het laden van de vormgeving toegepast. Alleen algemene introductieteksten en kopjes wisselen bij een bezoek en iedere twee minuten tussen ruim honderd varianten; programmanamen, afleveringen en statusmeldingen blijven letterlijk weergegeven. Dezelfde tekst wordt niet twee keer achter elkaar uit dezelfde groep gekozen.
 
 Bewaarde, afspeelbare opnames krijgen een thumbnail uit het lokale videobestand. Eén achtergrondtaak tegelijk maakt met FFmpeg een klein JPEG-beeld, zonder providerverbinding. Als een thumbnail nog wordt gemaakt of het bestand geen geschikt beeld bevat, blijft het bestaande opnamepictogram zichtbaar. Actieve of geplande opnames worden niet verwerkt. De cache wordt ongeldig wanneer bestandsgrootte of wijzigingstijd verandert en elke afbeelding vereist de beheerlogin.
 

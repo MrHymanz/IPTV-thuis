@@ -403,10 +403,5 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();if
 $('greeting').textContent=new Date().getHours()<12?'Goedemorgen.':new Date().getHours()<18?'Goedemiddag.':'Goedenavond.';
 showView();load().then(()=>{if(location.hash==='#guide')loadGuide();});setInterval(()=>{if(!document.hidden)load();},30000);
 
-function applyMobileTheme() {const theme=$('mobile-theme').value;store(localStorage,'iptv-mobile-theme',theme);document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='dark'||(theme==='system'&&window.matchMedia?.('(prefers-color-scheme: dark)').matches)?'#142321':'#f7f7f2';}
-$('mobile-theme').value=['light','dark','system'].includes(stored(localStorage,'iptv-mobile-theme'))?stored(localStorage,'iptv-mobile-theme'):'system';$('mobile-theme').onchange=applyMobileTheme;applyMobileTheme();
-
 function rotateMobileCopy(){document.querySelectorAll('[data-copy]').forEach(e=>e.textContent=window.pickMobileCopy(e.dataset.copy));if(['#films','#series'].includes(location.hash)){$('vod-heading').textContent=window.pickMobileCopy(vodKind==='series'?'seriesHead':'filmsHead');$('vod-subtitle').textContent=window.pickMobileCopy(vodKind==='series'?'seriesSub':'filmsSub');}}
 rotateMobileCopy();setInterval(()=>{if(!document.hidden)rotateMobileCopy();},120000);
-
-const themeMedia=window.matchMedia?.('(prefers-color-scheme: dark)');themeMedia?.addEventListener?.('change',()=>{if($('mobile-theme').value==='system')applyMobileTheme();});

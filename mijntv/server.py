@@ -209,8 +209,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, store.groups())
             elif parts.path == '/api/favorites':
                 self.reply(200, store.favorites())
-            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile-copy.js', '/mobile.css', '/hls.min.js', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
-                filename = {'/hls.min.js': 'hls.min.js', '/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile-copy.js': 'mobile-copy.js', '/mobile.css': 'mobile.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
+            elif parts.path in ('/', '/admin', '/admin/', '/admin.js', '/admin.css', '/theme.js', '/theme.css', '/tv', '/tv/', '/tv.js', '/tv.css', '/mobile', '/mobile/', '/mobile.js', '/mobile-copy.js', '/mobile.css', '/hls.min.js', '/catchup', '/catchup/', '/catchup.css', '/catchup.js', '/catchup-data.js'):
+                filename = {'/hls.min.js': 'hls.min.js', '/catchup': 'catchup.html', '/catchup/': 'catchup.html', '/catchup.css': 'catchup.css', '/catchup.js': 'catchup.js', '/catchup-data.js': 'catchup-data.js', '/mobile': 'mobile.html', '/mobile/': 'mobile.html', '/mobile.js': 'mobile.js', '/mobile-copy.js': 'mobile-copy.js', '/mobile.css': 'mobile.css', '/theme.js': 'theme.js', '/theme.css': 'theme.css', '/admin.js': 'admin.js', '/admin.css': 'admin.css', '/tv': 'tv.html', '/tv/': 'tv.html', '/tv.js': 'tv.js', '/tv.css': 'tv.css'}.get(parts.path, 'admin.html')
                 mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'}[Path(filename).suffix]
                 self.reply(200, (self.server.web_directory / filename).read_bytes(), mime + '; charset=utf-8')
             else:
