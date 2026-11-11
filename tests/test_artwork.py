@@ -73,6 +73,17 @@ class ArtworkTests(unittest.TestCase):
             request.assert_called_once()
         self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/correct.jpg')
 
+    def test_international_title_uses_provider_detail_identity_when_search_cannot_match(self):
+        self.item.update(title='NL - Your Mother Should Know', year='', tmdb_id='')
+        enriched = dict(self.item, tmdb_id='42')
+        configuration = ('provider-url', {}, 'provider-signature')
+        self.vod.artwork_metadata.side_effect = [(configuration, self.item), (configuration, enriched), (configuration, enriched)]
+        with patch.object(self.art, 'request', side_effect=[{'results': []}, {'poster_path': '/matchmaker.jpg'}]) as request:
+            self.art.fallback('movie', '7')
+        self.vod.detail.assert_called_once_with('movie', '7')
+        self.assertEqual(request.call_args_list[1].args[0], 'movie/42')
+        self.logos.get.assert_called_once_with('https://image.tmdb.org/t/p/w500/matchmaker.jpg')
+
     def test_ambiguous_matches_and_missing_images_are_negatively_cached(self):
         self.item.update(title='A Film', year='', tmdb_id='')
         data = {'results': [{'title': 'A Film', 'release_date': '1990', 'poster_path': '/old.jpg'},

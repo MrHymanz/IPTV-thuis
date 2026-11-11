@@ -132,7 +132,7 @@ class Artwork:
         key = self.store.setting('tmdb_key')
         if not key:
             raise ValueError('TMDB is niet ingesteld.')
-        identity = ['tmdb-match-v2', configuration[2], kind, str(identifier), item.get('title'), item.get('year'), item.get('tmdb_id'), item.get('imdb_id'), key]
+        identity = ['tmdb-match-v3', configuration[2], kind, str(identifier), item.get('title'), item.get('year'), item.get('tmdb_id'), item.get('imdb_id'), key]
         cache_key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with self.lock:
             lock = self.locks.setdefault(cache_key, threading.Lock())
@@ -144,6 +144,17 @@ class Artwork:
             else:
                 try:
                     result = self.lookup(item, key)
+                    if not result.get('poster_path') and not result.get('backdrop_path') and not item.get('tmdb_id') and not item.get('imdb_id'):
+                        # Older catalogue entries often have an international
+                        # title but expose the exact movie ID only in details.
+                        try:
+                            self.vod.detail(kind, identifier)
+                            _, enriched = self.vod.artwork_metadata(kind, identifier)
+                            self.vod.check(configuration)
+                            if enriched.get('tmdb_id') or enriched.get('imdb_id'):
+                                result = self.lookup(enriched, key)
+                        except ValueError:
+                            pass
                     data = {'poster': image_url(result.get('poster_path'), 'poster'),
                             'backdrop': image_url(result.get('backdrop_path'), 'backdrop')}
                     lifetime = 30*86400 if any(data.values()) else 86400
