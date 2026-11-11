@@ -6,9 +6,11 @@ import re
 import threading
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .catchup import Catchup, ProviderRequestError
-from .imdb import IMDbChart
+from .imdb import IMDbChart, title_key
 
 REFRESH_SECONDS = 6 * 3600
 PAGE_SIZE = 60
@@ -61,6 +63,7 @@ class VOD:
         self.closed = threading.Event()
         self.jobs_lock = threading.Lock()
         self.workers, self.sync_errors, self.sync_retry = {}, {}, {}
+        self.featured_lock, self.featured_cache = threading.Lock(), {}
         with store.connect() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS vod_items (
@@ -286,6 +289,33 @@ class VOD:
         item['backdrop'] = '/api/mobile/vod/cover?kind='+row['kind']+'&id='+row['id']+'&asset=backdrop' if artwork_enabled or item.get('has_backdrop') else ''
         return item
 
+    @staticmethod
+    def featured_rows(db, where, args, day):
+        # Daily deterministic mix across the whole permitted library, not just
+        # the first results page. Keep one quality/language version per title.
+        def daily(raw):
+            item = json.loads(raw)
+            return hashlib.sha256((day+title_key(item['title'])).encode()).hexdigest()
+        db.create_function('daily_feature', 1, daily)
+        rating = "CAST(replace(COALESCE(json_extract(data,'$.rating'),''),',','.') AS REAL)"
+        quality = "CASE WHEN cover LIKE 'https://image.tmdb.org/%' THEN 0 WHEN cover<>'' THEN 1 ELSE 2 END"
+        rated = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY '+rating+' DESC,title,id LIMIT 200', args).fetchall()
+        rated = sorted(rated, key=lambda row: (daily(row['data']), 0 if row['cover'].startswith('https://image.tmdb.org/') else 1, row['id']))
+        varied = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY daily_feature(data),'+quality+',id LIMIT 160', args).fetchall()
+        picks, seen = [], set()
+        for index in range(max(len(rated), len(varied))):
+            for pool in (rated, varied):
+                if index >= len(pool):
+                    continue
+                row = pool[index]
+                identity = title_key(row['title'])
+                if identity not in seen:
+                    seen.add(identity)
+                    picks.append(row)
+                    if len(picks) == 8:
+                        return picks
+        return picks
+
     def catalog(self, kind, category='', query='', offset=0, sort='title'):
         self.kind(kind)
         if sort not in ('title', 'rating', 'imdb250') or (kind != 'movie' and sort == 'imdb250'):
@@ -320,6 +350,11 @@ class VOD:
         if query.strip():
             where += ' AND instr(search,?)>0'
             args.append(query.strip().casefold()[:300])
+        feature_where, feature_args = where, list(args)
+        try:
+            featured_day = datetime.now(ZoneInfo('Europe/Amsterdam')).date().isoformat()
+        except ZoneInfoNotFoundError:
+            featured_day = time.strftime('%Y-%m-%d')
         if sort == 'imdb250':
             self.chart.refresh()
             notice = ' '.join(filter(None, [notice, self.chart.notice]))
@@ -335,16 +370,34 @@ class VOD:
                           if selected is None or row['id'] in selected]
             total = db.execute('SELECT count(*) FROM vod_items WHERE '+where, args).fetchone()[0]
             rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY '+ordering+' LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
+            featured = self.daily_featured(db, kind, feature_where, feature_args, featured_day) if not category and not query.strip() and not requires_category else []
         artwork_enabled = bool(self.store.setting('tmdb_key'))
         items = [self.public(row, artwork_enabled) for row in rows]
         if sort == 'imdb250':
             ranker = self.chart.ranker()
             for item, row in zip(items, rows):
                 item['imdb_rank'] = ranker(row['data'])
-        return {'items': items, 'categories': categories,
+        return {'items': items, 'categories': categories, 'featured': [self.public(row, artwork_enabled) for row in featured], 'featured_day': featured_day,
                 'total': total, 'offset': offset, 'limit': PAGE_SIZE, 'notice': notice,
                 'signature': configuration[2][:16], 'requires_category': requires_category,
                 'loading': loading, 'allowed_categories': selected}
+
+    def daily_featured(self, db, kind, where, args, day):
+        stamp = db.execute('SELECT max(updated) FROM vod_meta WHERE signature=? AND (kind=? OR kind LIKE ?)',
+                           (args[0], kind, kind+':category:%')).fetchone()[0]
+        key = (day, where, tuple(args), stamp)
+        with self.featured_lock:
+            cached = self.featured_cache.get(kind)
+            if cached and cached[0] == key:
+                ids = cached[1]
+                if not ids:
+                    return []
+                rows = db.execute('SELECT * FROM vod_items WHERE '+where+' AND id IN ('+','.join('?' for _ in ids)+')', (*args, *ids)).fetchall()
+                by_id = {row['id']: row for row in rows}
+                return [by_id[key] for key in ids if key in by_id]
+            rows = self.featured_rows(db, where, args, day)
+            self.featured_cache[kind] = (key, [row['id'] for row in rows])
+            return rows
 
     def _item(self, configuration, kind, key):
         with self.store.connect() as db:

@@ -300,3 +300,43 @@ class VODTests(unittest.TestCase):
         _, metadata = self.vod.artwork_metadata('movie', '7')
         self.assertEqual(metadata['tmdb_id'], '42')
         self.assertNotIn('background', json.dumps(metadata))
+
+    def test_featured_selection_is_daily_diverse_and_independent_of_pagination(self):
+        self.movies = [dict(self.movies[0], stream_id=i, name=f'Film {i:03}', rating=str(5+i%5)) for i in range(120)]
+        result = self.catalog()
+        self.assertEqual(len(result['featured']), 8)
+        with self.store.connect() as db:
+            signature = self.vod.configuration()[2]
+            where, args = 'signature=? AND kind=?', (signature, 'movie')
+            first = self.vod.featured_rows(db, where, args, '2026-11-11')
+            again = self.vod.featured_rows(db, where, args, '2026-11-11')
+            tomorrow = self.vod.featured_rows(db, where, args, '2026-11-12')
+        self.assertEqual([r['id'] for r in first], [r['id'] for r in again])
+        self.assertNotEqual([r['id'] for r in first], [r['id'] for r in tomorrow])
+        self.assertEqual(result['featured'], self.catalog(offset=60)['featured'])
+        self.assertTrue(any(int(r['id']) >= 60 for r in first))
+        self.assertNotIn('private-cover.test', json.dumps(result['featured']))
+
+    def test_featured_selection_deduplicates_quality_variants_and_respects_visibility(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='NL - The Dark Knight 4K (2008)', category_id='1'),
+                       dict(self.movies[0], stream_id=2, name='NL| The Dark Knight HD', category_id='1'),
+                       dict(self.movies[0], stream_id=3, name='A hidden film', category_id='2')]
+        self.catalog()
+        with patch.object(self.vod, 'start_sync'):
+            self.vod.save_selection({'movie': ['1'], 'series': []})
+            featured = self.catalog()['featured']
+            self.assertEqual(len(featured), 1)
+            self.assertIn(featured[0]['id'], ('1', '2'))
+            self.assertEqual(self.catalog(query='Dark')['featured'], [])
+            self.assertEqual(self.catalog(category='1')['featured'], [])
+            self.assertEqual(self.catalog('series')['featured'], [])
+
+    def test_featured_picks_are_cached_until_the_catalog_changes(self):
+        with patch.object(self.vod, 'featured_rows', wraps=self.vod.featured_rows) as pick:
+            first = self.catalog()['featured']
+            self.assertEqual(self.catalog()['featured'], first)
+            self.assertEqual(pick.call_count, 1)
+            with self.store.connect() as db:
+                db.execute("UPDATE vod_meta SET updated=updated+1 WHERE kind='movie'")
+            self.catalog()
+            self.assertEqual(pick.call_count, 2)

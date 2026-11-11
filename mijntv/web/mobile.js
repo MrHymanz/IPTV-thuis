@@ -153,6 +153,7 @@ function openProgramme(p) {
 // Films and series use separate server catalogues and category IDs.
 let vodKind='movie', vodItems=[], vodTotal=0, vodSignature='', vodGeneration=0, vodDetailGeneration=0;
 let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false, vodAllowed=null, vodPollTimer;
+let vodFeatured=[], featuredIndex=0, featuredKey='', featuredFrame, featuredDay='';
 const vodState={movie:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-movie')||'title'},series:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-series')||'title'}};
 function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
@@ -179,10 +180,39 @@ function renderVod() {
   $('vod-count').textContent=vodFilter==='all'&&vodRequiresCategory?'':(vodFilter==='all'?vodTotal:shown.length)+' titels';
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
   $('vod-more').hidden=vodFilter!=='all'||vodItems.length>=vodTotal;
-  $('vod-featured').hidden=vodFilter!=='all'||!shown.length||!!q||!!vodState[vodKind].category;
-  if(shown.length){const item=shown[0];$('vod-featured-art').replaceChildren(vodPoster(item,true));$('vod-featured-title').textContent=item.title;$('vod-featured-meta').textContent=[item.year,item.rating?'★ '+item.rating:''].filter(Boolean).join(' · ');$('vod-featured-tag').textContent=vodKind==='movie'?'UITGELICHT · FILM':'UITGELICHT · SERIE';$('vod-featured').onclick=()=>openVodDetail(item);}
+  renderVodFeatured(!!q||!!vodState[vodKind].category||vodFilter!=='all');
   for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']]){const active=filter===vodFilter;$(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));}
 }
+function updateFeaturedIndex(index) {
+  featuredIndex=Math.max(0,Math.min(index,vodFeatured.length-1));
+  $('vod-featured-count').textContent=vodFeatured.length?(featuredIndex+1)+' / '+vodFeatured.length:'';
+  $('vod-featured-prev').disabled=featuredIndex===0;$('vod-featured-next').disabled=featuredIndex>=vodFeatured.length-1;
+  [...$('vod-featured-dots').children].forEach((dot,i)=>dot.setAttribute('aria-current',String(i===featuredIndex)));
+}
+function showFeatured(index) {
+  updateFeaturedIndex(index);const slide=$('vod-featured-track').children[featuredIndex];if(!slide)return;
+  $('vod-featured-track').scrollTo({left:slide.offsetLeft,behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+}
+function renderVodFeatured(hide) {
+  $('vod-featured').hidden=hide||!vodFeatured.length;if($('vod-featured').hidden)return;
+  const key=vodKind+vodSignature+JSON.stringify(vodFeatured.map(i=>[i.id,i.cover,i.backdrop,i.title,i.rating]));
+  if(key===featuredKey)return;featuredKey=key;
+  const selectedId=$('vod-featured-track').children[featuredIndex]?.dataset.id;
+  const slides=vodFeatured.map((item,index)=>{
+    const slide=action('',()=>openVodDetail(item),'vod-featured');slide.dataset.id=item.id;slide.setAttribute('aria-label',item.title+' · '+(index+1)+' van '+vodFeatured.length);
+    const art=element('span','vod-featured-art');art.append(vodPoster(item,true));const img=art.querySelector('img');if(img)img.loading=index?'lazy':'eager';
+    const copy=element('span','vod-featured-copy');copy.append(element('span','tag light',vodKind==='movie'?'UITGELICHT · FILM':'UITGELICHT · SERIE'),element('strong','',item.title),element('span','',[item.year,item.rating?'★ '+item.rating:''].filter(Boolean).join(' · ')),element('span','watch-pill','▶  Bekijk details'));
+    slide.append(art,copy);return slide;
+  });
+  $('vod-featured-track').replaceChildren(...slides);
+  $('vod-featured-dots').replaceChildren(...vodFeatured.map((item,index)=>{const dot=action('',()=>showFeatured(index),'featured-dot');dot.setAttribute('aria-label','Toon '+item.title);return dot;}));
+  $('vod-featured-controls').hidden=vodFeatured.length<2;$('vod-featured-hint').hidden=vodFeatured.length<2;
+  updateFeaturedIndex(Math.max(0,vodFeatured.findIndex(i=>i.id===selectedId)));
+  requestAnimationFrame(()=>{const slide=$('vod-featured-track').children[featuredIndex];if(slide)$('vod-featured-track').scrollLeft=slide.offsetLeft;});
+}
+$('vod-featured-prev').onclick=()=>showFeatured(featuredIndex-1);$('vod-featured-next').onclick=()=>showFeatured(featuredIndex+1);
+$('vod-featured-track').addEventListener('scroll',()=>{cancelAnimationFrame(featuredFrame);featuredFrame=requestAnimationFrame(()=>{const track=$('vod-featured-track');let nearest=0;[...track.children].forEach((slide,index)=>{if(Math.abs(slide.offsetLeft-track.scrollLeft)<Math.abs(track.children[nearest].offsetLeft-track.scrollLeft))nearest=index;});updateFeaturedIndex(nearest);});},{passive:true});
+$('vod-featured-track').addEventListener('keydown',event=>{if(event.key==='ArrowRight'||event.key==='ArrowLeft'){event.preventDefault();showFeatured(featuredIndex+(event.key==='ArrowRight'?1:-1));$('vod-featured-track').children[featuredIndex]?.focus({preventScroll:true});}});
 async function loadVod(append=false,quiet=false) {
   clearTimeout(vodPollTimer);
   const generation=++vodGeneration,kind=vodKind,state={...vodState[kind]};
@@ -192,7 +222,7 @@ async function loadVod(append=false,quiet=false) {
   try {
     const result=await api('/api/mobile/vod?'+params);if(generation!==vodGeneration)return;
     if(append&&vodSignature&&vodSignature!==result.signature){vodItems=[];vodTotal=0;throw Error('Je provideraccount is gewijzigd. Open het aanbod opnieuw.');}
-    vodAllowed=result.allowed_categories??null;vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?[...new Map(vodItems.concat(result.items).map(i=>[i.id,i])).values()]:quiet&&vodItems.length>60?vodItems:result.items;vodTotal=result.total;
+    featuredDay=result.featured_day||'';vodFeatured=result.featured||[];vodAllowed=result.allowed_categories??null;vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?[...new Map(vodItems.concat(result.items).map(i=>[i.id,i])).values()]:quiet&&vodItems.length>60?vodItems:result.items;vodTotal=result.total;
     const categories=[new Option(result.requires_category?'Kies een categorie':'Alle categorieën',''),...result.categories.map(c=>new Option(c.name,c.id))];
     if(state.category&&!result.categories.some(c=>c.id===state.category))categories.push(new Option('Eerdere categorie',state.category));
     $('vod-category').replaceChildren(...categories);$('vod-category').value=state.category;$('vod-notice').textContent=result.notice||'';renderVod();if(result.loading)vodPollTimer=setTimeout(()=>{if(['#films','#series'].includes(location.hash)&&!document.hidden)loadVod(false,true);},5000);
@@ -405,3 +435,5 @@ showView();load().then(()=>{if(location.hash==='#guide')loadGuide();});setInterv
 
 function rotateMobileCopy(){document.querySelectorAll('[data-copy]').forEach(e=>e.textContent=window.pickMobileCopy(e.dataset.copy));if(['#films','#series'].includes(location.hash)){$('vod-heading').textContent=window.pickMobileCopy(vodKind==='series'?'seriesHead':'filmsHead');$('vod-subtitle').textContent=window.pickMobileCopy(vodKind==='series'?'seriesSub':'filmsSub');}}
 rotateMobileCopy();setInterval(()=>{if(!document.hidden)rotateMobileCopy();},120000);
+
+setInterval(()=>{if(document.hidden||vodLoading||!['#films','#series'].includes(location.hash))return;const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Amsterdam',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(p=>[p.type,p.value]));if(featuredDay&&featuredDay!==parts.year+'-'+parts.month+'-'+parts.day)loadVod(false,true);},60000);
