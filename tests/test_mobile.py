@@ -11,7 +11,7 @@ import time
 import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mijntv.backup import BackupAccount
 from mijntv.mobile import MobilePlayback
@@ -66,6 +66,21 @@ class MobileTests(unittest.TestCase):
         source=next(s for s in self.channel['sources'] if s['account']=='primary')
         self.hub.view(self.channel,source)
         return self.hub.viewer
+
+    def test_converter_diagnostics_keep_only_safe_failure_category(self):
+        session = {'process': Mock(stderr=io.BytesIO(
+            b'[http] HTTP error 403 Forbidden https://provider.test/movie/user/private-password/1.mp4\n')),
+                   'failure': 'unknown'}
+        self.mobile._diagnose(session)
+        self.assertEqual(session['failure'], 'provider_denied')
+        self.assertNotIn('private-password', session['failure'])
+
+    def test_movie_number_is_not_mistaken_for_http_status(self):
+        session = {'process': Mock(stderr=io.BytesIO(
+            b'Invalid data found when processing input https://provider.test/movie/user/password/403.mp4\n')),
+                   'failure': 'unknown'}
+        self.mobile._diagnose(session)
+        self.assertEqual(session['failure'], 'unknown')
 
     def test_tv_uses_primary_phone_uses_backup_without_touching_tv(self):
         feed=self.tv()
@@ -283,6 +298,51 @@ class QuietFiles(SimpleHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg needed for real HLS playback')
 class MobileHLSIntegration(unittest.TestCase):
+    def test_movie_and_episode_have_short_playable_segments_including_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=25',
+                            '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '10',
+                            '-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '1', '-c:a', 'aac',
+                            '-movflags', '+faststart', str(root/'video.mp4')], check=True, capture_output=True)
+            http = ThreadingHTTPServer(('127.0.0.1', 0), partial(QuietFiles, directory=directory))
+            threading.Thread(target=http.serve_forever, daemon=True).start()
+            store = Store(root/'data')
+            hub = StreamHub(store)
+            recordings = Recordings(store, hub)
+            vod = Mock()
+            vod.playback.return_value = {'url': 'http://127.0.0.1:'+str(http.server_port)+'/video.mp4',
+                                         'configuration': ('fixture', {}, 'signature'), 'title': 'Film',
+                                         'label': 'Film', 'duration': 10}
+            mobile = MobilePlayback(store, recordings, hub, vod)
+            try:
+                for kind, offset in [('movie', 0), ('episode', 3)]:
+                    with self.subTest(kind=kind):
+                        with self.assertLogs('mijntv.stream', level='INFO') as captured:
+                            player = mobile.start({'kind': kind, 'id': '7', 'signature': 'signature', 'position': offset})
+                            deadline = time.monotonic()+12
+                            while time.monotonic() < deadline:
+                                state = mobile.status(player['token'])
+                                if state['ready'] or state['state'] == 'error':
+                                    break
+                                time.sleep(.1)
+                        self.assertTrue(state['ready'], state)
+                        self.assertEqual(state['position'], offset)
+                        playlist, _ = mobile.asset(player['token'], 'index.m3u8')
+                        lengths = [float(line.split(':')[1].rstrip(',')) for line in playlist.decode().splitlines() if line.startswith('#EXTINF:')]
+                        self.assertTrue(lengths)
+                        self.assertLessEqual(max(lengths), 1.1)
+                        segment = next(line for line in playlist.decode().splitlines() if line.endswith('.ts'))
+                        data, _ = mobile.asset(player['token'], segment)
+                        (root/'segment.ts').write_bytes(data)
+                        probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_name',
+                                                '-of', 'json', str(root/'segment.ts')], capture_output=True, check=True)
+                        self.assertTrue({'h264', 'aac'} <= {stream['codec_name'] for stream in json.loads(probe.stdout)['streams']})
+                        self.assertIn('mobile_ready', ' '.join(captured.output))
+                        mobile.stop(player['token'])
+            finally:
+                mobile.close(); recordings.close(); hub.close(); http.shutdown(); http.server_close()
+
     def test_real_hls_is_h264_aac_and_releases_on_tv_preemption(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

@@ -89,6 +89,7 @@ class MobilePlayback:
         raise RecordingConflict('Geen vrij kijkaccount voor deze zender. De tv en opnames houden voorrang. Probeer het later opnieuw.')
 
     def start(self, data):
+        requested_at = time.monotonic()
         if self.closed.is_set():
             raise ValueError('De mobiele speler wordt afgesloten. Probeer later opnieuw.')
         if not shutil.which('ffmpeg'):
@@ -182,26 +183,35 @@ class MobilePlayback:
                 manifest.chmod(0o600)
                 input_args = ['-f', 'concat', '-safe', '0', '-protocol_whitelist',
                               'file,http,https,tcp,tls,crypto', '-i', str(manifest)]
+            # One-second VOD segments reduce Safari's initial HLS buffer;
+            # keep the same ninety-second seek window and bitrate limits.
+            fast_start = kind in ('movie', 'episode')
+            segment_seconds = 1 if fast_start else 2
             command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
                        *(['-ss', str(offset)] if offset else []), '-re', '-threads', '2', *input_args,
                        '-map', '0:v:0?', '-map', '0:a:0?', '-sn', '-dn',
                        '-vf', "scale=w='min(1280,iw)':h=-2,fps=25", '-c:v', 'libx264', '-preset', 'veryfast',
+                       *(['-tune', 'zerolatency'] if fast_start else []),
                        '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-threads', '2',
                        '-b:v', '1800k', '-maxrate', '2200k', '-bufsize', '4400k',
-                       '-force_key_frames', 'expr:gte(t,n_forced*2)',
+                       '-force_key_frames', 'expr:gte(t,n_forced*'+str(segment_seconds)+')',
                        '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-                       '-f', 'hls', '-hls_time', '2', '-hls_list_size', '45',
+                       '-f', 'hls', '-hls_time', str(segment_seconds), '-hls_list_size', str(90//segment_seconds),
                        '-hls_delete_threshold', '2', '-hls_flags', 'delete_segments+independent_segments+temp_file',
                        '-hls_segment_filename', str(root / 'segment%06d.ts'), str(root / 'index.m3u8')]
             try:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL)
+                                           stderr=subprocess.PIPE)
             except OSError:
                 directory.cleanup()
                 raise ValueError('De mobiele videospeler kon niet starten.') from None
             session = dict(token=token, directory=directory, process=process, state='loading', message='',
                            kind=kind, id=identifier, title=title, channel=label, duration=duration,
-                           position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False)
+                           position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False,
+                           requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown')
+            logging.getLogger('mijntv.stream').info('mobile_start kind=%s preparation_seconds=%.2f',
+                                                   kind, session['transcoder_at']-requested_at)
+            threading.Thread(target=self._diagnose, args=(session,), daemon=True).start()
             self.sessions[token] = session
             self.current = token
             if account:
@@ -209,6 +219,41 @@ class MobilePlayback:
                     self._stop(session, 'preempted', 'De tv of opname heeft dit account nodig. Mobiel probeert een ander account.')
                 self.streams.mobile = {'owner': token, 'key': account, 'stop': preempt}
             return self.status(token)
+
+    @staticmethod
+    def _diagnose(session):
+        """Drain stderr without retaining or logging credential-bearing raw text."""
+        stream = getattr(session['process'], 'stderr', None)
+        if stream is None:
+            return
+        try:
+            with stream:
+                while True:
+                    line = stream.readline(4096)
+                    if not line:
+                        break
+                    text = line.decode('utf-8', errors='replace').lower()
+                    category = None
+                    status = re.search(r'(?:http error|server returned|http/[0-9.]+)\s+([1-5][0-9]{2})\b', text)
+                    code = status[1] if status else ''
+                    if code in ('401', '403'):
+                        category = 'provider_denied'
+                    elif code == '404':
+                        category = 'title_unavailable'
+                    elif code.startswith('5'):
+                        category = 'provider_error'
+                    elif 'timed out' in text or 'timeout' in text:
+                        category = 'source_timeout'
+                    elif any(value in text for value in ('connection refused', 'connection reset', 'network is unreachable', 'failed to resolve')):
+                        category = 'source_connection'
+                    elif any(value in text for value in ('unknown decoder', 'decoder not found', 'unsupported codec')):
+                        category = 'unsupported_codec'
+                    elif any(value in text for value in ('error initializing output', 'error while opening encoder', 'failed to configure output pad')):
+                        category = 'conversion_error'
+                    if category and session['failure'] == 'unknown':
+                        session['failure'] = category
+        except OSError:
+            pass
 
     @staticmethod
     def duration(path):
@@ -225,12 +270,21 @@ class MobilePlayback:
             s = self._session(token)
             s['seen'] = time.monotonic()
             ready = (Path(s['directory'].name) / 'index.m3u8').exists()
+            if ready and not s['ready_logged']:
+                s['ready_logged'] = True
+                now = time.monotonic()
+                logging.getLogger('mijntv.stream').info(
+                    'mobile_ready kind=%s preparation_seconds=%.2f stream_seconds=%.2f total_seconds=%.2f',
+                    s['kind'], s['transcoder_at']-s['requested_at'], now-s['transcoder_at'], now-s['requested_at'])
             if s['state'] not in ('stopped', 'preempted', 'error'):
                 code = s['process'].poll()
                 if code is not None:
                     if code == 0 and ready:
                         s['state'] = 'ended'
                     else:
+                        logging.getLogger('mijntv.stream').info(
+                            'mobile_failed kind=%s category=%s exit_code=%s stream_seconds=%.2f',
+                            s['kind'], s['failure'], code, time.monotonic()-s['transcoder_at'])
                         self._stop(s, 'error', 'Deze bron kon niet worden afgespeeld. Probeer een andere zender of opnieuw.')
                 elif ready:
                     s['state'] = 'paused' if s['paused'] else 'playing'
