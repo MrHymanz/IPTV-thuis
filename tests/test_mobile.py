@@ -135,6 +135,22 @@ class MobileTests(unittest.TestCase):
         self.assertEqual(self.mobile.current,first['token'])
         self.assertIsNone(self.mobile.sessions[first['token']]['process'].poll())
 
+    def test_new_phone_can_replace_expired_session_without_monitor_tick(self):
+        first = self.play()
+        session = self.mobile.sessions[first['token']]
+        session['seen'] = time.monotonic() - 46
+        second = self.play()
+        self.assertNotEqual(first['token'], second['token'])
+        self.assertIsNotNone(session['process'].poll())
+        self.assertNotIn(first['token'], self.mobile.sessions)
+
+    def test_new_phone_can_replace_exited_transcoder(self):
+        first = self.play()
+        self.mobile.sessions[first['token']]['process'].code = 1
+        second = self.play()
+        self.assertNotEqual(first['token'], second['token'])
+        self.assertNotIn(first['token'], self.mobile.sessions)
+
     def test_tv_archive_reserves_primary_and_preempts_phone(self):
         first=self.play()
         self.recordings.reserve_archive(lambda:None)

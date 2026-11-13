@@ -3,6 +3,12 @@ const $ = id => document.getElementById(id);
 const video = $('video');
 let channels = [], recordings = [], filter = 'Alles', recordingFilter = 'saved', guide = [], guideDay = 0, guideGeneration = 0;
 let player = null, hls = null, request = null, playerGeneration = 0, playerTimer, heartbeat, retries = 0, restarting = false, attaching = false;
+let playbackQueue = Promise.resolve();
+function playbackMutation(path, body) {
+  const pending = playbackQueue.then(()=>api(path, body, true));
+  playbackQueue = pending.catch(()=>{});
+  return pending;
+}
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
 function store(storage,key,value) {try{if(value===null)storage.removeItem(key);else storage.setItem(key,value);}catch(_){}}
@@ -320,8 +326,17 @@ async function openPlayer(data, automatic=false) {
   $('player-message').textContent='De tv en opnames houden voorrang.';$('player-title').textContent='Verbinden…';$('player-channel').textContent='';
   if(!$('player').open)$('player').showModal();
   try {
-    const result=await api('/api/mobile/play',{...data,...(previous?{session:previous}:{}),...(automatic?{retry:true}:{})});
-    if(generation!==playerGeneration){api('/api/mobile/stop',{token:result.player.token}).catch(()=>{});return;}
+    const pending=playbackQueue.then(async()=>{
+      if(generation!==playerGeneration)return null;
+      const session=stored(sessionStorage,'iptv-mobile-session')||previous;
+      const result=await api('/api/mobile/play',{...data,...(session?{session}:{}),...(automatic?{retry:true}:{})});
+      if(generation!==playerGeneration){await api('/api/mobile/stop',{token:result.player.token},true);return null;}
+      store(sessionStorage,'iptv-mobile-session',result.player.token);
+      return result;
+    });
+    playbackQueue=pending.catch(()=>{});
+    const result=await pending;
+    if(!result||generation!==playerGeneration)return;
     player=result.player; store(sessionStorage,'iptv-mobile-session',player.token);
     $('player-title').textContent=player.title;$('player-channel').textContent=player.channel;$('player-kind').textContent=player.kind==='live'?'LIVE':player.kind==='archive'?'TERUGKIJKEN':player.kind==='movie'?'FILM':player.kind==='episode'?'SERIE':'OPNAME';
     $('go-live').hidden=player.kind!=='live';$('player-message').textContent=player.kind==='live'?'Je kijkt live. Spoelen kan binnen het gebufferde deel.':player.kind==='recording'?'Je opname speelt vanaf het gekozen moment.':['movie','episode'].includes(player.kind)?'Je kijkt op jouw moment. De tv en opnames houden voorrang.':'Je kijkt de gekozen uitzending terug.';
@@ -339,7 +354,7 @@ async function openPlayer(data, automatic=false) {
     };poll();
   }catch(error){
     if(generation!==playerGeneration)return;
-    if(previous)api('/api/mobile/stop',{token:previous}).catch(()=>{});
+    if(previous)playbackMutation('/api/mobile/stop',{token:previous}).catch(()=>{});
     store(sessionStorage,'iptv-mobile-session',null);failPlayer(error.message);
   }
 }
@@ -358,7 +373,7 @@ function attachVideo(generation) {
     hls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal&&generation===playerGeneration)restartPlayer('De videostream is onderbroken.');});
     hls.on(Hls.Events.MANIFEST_PARSED,tryPlay);hls.loadSource(player.playlist);hls.attachMedia(video);
   }else if(nativeHls){video.src=player.playlist;video.load();tryPlay();}
-  else{attaching=false;failPlayer('Deze browser ondersteunt deze videospeler niet. Gebruik Safari op je iPhone of een actuele Chrome-browser.');api('/api/mobile/stop',{token:player.token}).catch(()=>{});return false;}
+  else{attaching=false;failPlayer('Deze browser ondersteunt deze videospeler niet. Gebruik Safari op je iPhone of een actuele Chrome-browser.');playbackMutation('/api/mobile/stop',{token:player.token}).catch(()=>{});return false;}
   function tryPlay(){attaching=false;video.play().catch(()=>{if(generation===playerGeneration){$('player-loading').hidden=true;$('player-message').textContent='Tik op afspelen om te beginnen.';}});}
 }
 function restartPlayer(message) {
@@ -369,8 +384,8 @@ function restartPlayer(message) {
 }
 async function closePlayer() {
   const token=player?.token || stored(sessionStorage,'iptv-mobile-session'); if(player&&!video.ended&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:position(),duration:player.duration}));saveVodProgress();} ++playerGeneration;clearVideo();player=null;request=null;
-  store(sessionStorage,'iptv-mobile-session',null);if($('player').open)$('player').close();
-  if(token)try{await api('/api/mobile/stop',{token});}catch(_){}
+  if($('player').open)$('player').close();
+  if(token)try{await playbackMutation('/api/mobile/stop',{token});if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}catch(_){}
 }
 function position() {
   if(!player)return 0;if(origin===null&&video.seekable.length)origin=video.seekable.start(0);
@@ -405,6 +420,14 @@ function setupSeek(id,direction) {
 }
 document.addEventListener('click',event=>{const nav=event.target.closest('[data-go]');if(nav){if(location.hash==='#'+nav.dataset.go)showView();else location.hash=nav.dataset.go;}});
 $('channel-search').oninput=renderChannels;
+for(const id of ['channel-search','vod-search']) {
+  $(id).setAttribute('enterkeyhint','search');
+  $(id).addEventListener('keydown',event=>{
+    if(event.key!=='Enter'||event.isComposing)return;
+    event.preventDefault();$(id).blur();
+    if(id==='vod-search'){clearTimeout(vodSearchTimer);loadVod();}else renderChannels();
+  });
+}
 $('filters').onclick=e=>{const b=e.target.closest('[data-filter]');if(!b)return;filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b));});renderChannels();};
 $('recording-filters').onclick=e=>{const b=e.target.closest('[data-recording-filter]');if(!b)return;recordingFilter=b.dataset.recordingFilter;document.querySelectorAll('[data-recording-filter]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b));});renderRecordings();};
 $('guide-days').onclick=e=>{const b=e.target.closest('[data-day]');if(!b)return;guideDay=Number(b.dataset.day);document.querySelectorAll('[data-day]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b));});renderGuide();};
@@ -428,7 +451,7 @@ for(const event of ['pause','play'])video.addEventListener(event,()=>{
 });
 setupSeek('rewind',-1);setupSeek('forward',1);
 window.addEventListener('hashchange',showView);
-window.addEventListener('pagehide',()=>{const token=player?.token;if(token)api('/api/mobile/stop',{token},true).catch(()=>{});});
+window.addEventListener('pagehide',()=>{closePlayer();});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();if(player)checkPlayer(playerGeneration);}});
 $('greeting').textContent=new Date().getHours()<12?'Goedemorgen.':new Date().getHours()<18?'Goedemiddag.':'Goedenavond.';
 showView();load().then(()=>{if(location.hash==='#guide')loadGuide();});setInterval(()=>{if(!document.hidden)load();},30000);

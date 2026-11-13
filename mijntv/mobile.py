@@ -113,7 +113,12 @@ class MobilePlayback:
         with self.streams.lock:
             if self.closed.is_set():
                 raise ValueError('De mobiele speler wordt afgesloten.')
+            # Reap abandoned sessions before deciding whether a phone is active.
+            self.expire()
             current = self.sessions.get(self.current)
+            if current and current['process'].poll() is not None:
+                self._cleanup(current)
+                current = None
             if current and current['state'] not in ('stopped', 'preempted', 'error', 'ended'):
                 if data.get('session') != current['token']:
                     raise RecordingConflict('Er is al een mobiele speler actief. Sluit die eerst.')
