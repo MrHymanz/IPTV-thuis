@@ -47,6 +47,20 @@ class VODTests(unittest.TestCase):
     def catalog(self, kind='movie', **kwargs):
         return self.vod.catalog(kind, **kwargs)
 
+    def test_artwork_warming_uses_cached_allowed_titles_and_prioritizes_both_carousels(self):
+        self.movies.append(dict(self.movies[0], stream_id=8, category_id='hidden', name='Hidden'))
+        self.catalog()
+        self.catalog('series')
+        self.store.set_setting('mobile_vod_selection:'+self.vod.configuration()[2],
+                               json.dumps({'movie': ['1'], 'series': ['1']}))
+        self.calls.clear()
+        with patch.object(self.vod, 'start_sync'):
+            tasks = list(self.vod.artwork_candidates())
+        self.assertFalse(self.calls)
+        self.assertEqual({(task[1], task[2]) for task in tasks}, {('movie', '7'), ('series', '7')})
+        self.assertEqual([task[4] for task in tasks[:4]], [0, 0, 0, 0])
+        self.assertEqual({task[3] for task in tasks}, {'poster', 'backdrop'})
+
     def test_same_category_and_title_ids_stay_separate_for_films_and_series(self):
         movies, series = self.catalog(), self.catalog('series')
         self.assertEqual(movies['categories'], [{'id': '1', 'name': 'HBO Films'}])

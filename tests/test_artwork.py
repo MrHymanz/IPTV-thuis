@@ -157,3 +157,68 @@ class ArtworkTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'gewijzigd'):
                 self.art.fallback('movie', '7')
         self.logos.get.assert_not_called()
+
+
+class ArtworkWarmingTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.store = Store(self.directory.name)
+        self.vod, self.logos = Mock(), Mock()
+        self.vod.configuration.return_value = ('provider', {}, 'signature')
+        self.vod.cover_url.return_value = 'https://provider.test/broken.jpg'
+        self.art = Artwork(self.store, self.vod, self.logos)
+
+    def test_working_alternative_survives_restart_without_retrying_broken_provider(self):
+        self.logos.get.side_effect = ValueError('offline')
+        with patch.object(self.art, 'fallback', return_value=(b'jpeg', 'image/jpeg')):
+            self.assertEqual(self.art.get('movie', '7'), (b'jpeg', 'image/jpeg'))
+        restarted = Artwork(self.store, self.vod, self.logos)
+        self.logos.get.reset_mock()
+        with patch.object(restarted, 'fallback', return_value=(b'jpeg', 'image/jpeg')):
+            self.assertEqual(restarted.get('movie', '7'), (b'jpeg', 'image/jpeg'))
+        self.logos.get.assert_not_called()
+        # Access restrictions are checked even for a previously warmed image.
+        self.vod.cover_url.side_effect = ValueError('hidden')
+        with self.assertRaises(ValueError):
+            restarted.get('movie', '7')
+
+    def test_changed_provider_image_is_tried_again(self):
+        self.logos.get.side_effect = ValueError('offline')
+        with patch.object(self.art, 'fallback', return_value=(b'jpeg', 'image/jpeg')):
+            self.art.get('movie', '7')
+        self.vod.cover_url.return_value = 'https://provider.test/new.jpg'
+        self.logos.get.side_effect = None
+        self.logos.get.return_value = (b'new', 'image/jpeg')
+        self.assertEqual(self.art.get('movie', '7'), (b'new', 'image/jpeg'))
+
+    def test_queue_prioritizes_carousel_deduplicates_and_backs_off_failures(self):
+        from mijntv.artwork import ArtworkWarmer
+        self.vod.artwork_candidates.return_value = [
+            ('signature', 'movie', '1', 'poster', 5),
+            ('signature', 'series', '2', 'backdrop', 0),
+            ('signature', 'series', '2', 'backdrop', 0)]
+        with patch('mijntv.artwork.threading.Thread.start'):
+            warmer = ArtworkWarmer(self.art)
+        self.addCleanup(warmer.close)
+        warmer.fill()
+        warmer.fill()
+        self.assertEqual(warmer.tasks.qsize(), 2)
+        processed = []
+        def fail(kind, identifier, asset):
+            processed.append((kind, identifier, asset))
+            warmer.close()
+            raise ValueError('offline')
+        with patch.object(self.art, 'get', side_effect=fail):
+            warmer.run()
+        self.assertEqual(processed, [('series', '2', 'backdrop')])
+        self.assertGreater(warmer.retry[('signature', 'series', '2', 'backdrop')], time.monotonic()+290)
+
+    def test_queue_is_bounded(self):
+        from mijntv.artwork import ArtworkWarmer
+        self.vod.artwork_candidates.return_value = [('signature', 'movie', str(i), 'poster', 5) for i in range(5000)]
+        with patch('mijntv.artwork.threading.Thread.start'):
+            warmer = ArtworkWarmer(self.art)
+        self.addCleanup(warmer.close)
+        warmer.fill()
+        self.assertEqual(warmer.tasks.qsize(), 4096)

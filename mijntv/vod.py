@@ -489,6 +489,35 @@ class VOD:
             public = self.public(row, bool(self.store.setting('tmdb_key')))
             return dict(data, cover=public['cover'], backdrop=('/api/mobile/vod/cover?kind='+kind+'&id='+key+'&asset=backdrop') if data.get('has_backdrop') else public['backdrop'], notice=notice, signature=configuration[2][:16])
 
+    def artwork_candidates(self):
+        """Read cached, permitted titles without fetching a giant full catalogue."""
+        configuration = self.configuration()
+        try:
+            day = datetime.now(ZoneInfo('Europe/Amsterdam')).date().isoformat()
+        except ZoneInfoNotFoundError:
+            day = time.strftime('%Y-%m-%d')
+        groups = []
+        for kind in ('movie', 'series'):
+            selected = self.selection(kind)
+            self.start_sync(kind)
+            where, args = 'signature=? AND kind=?', [configuration[2], kind]
+            if selected is not None:
+                where += ' AND category IN ('+','.join('?' for _ in selected)+')' if selected else ' AND 0'
+                args.extend(selected)
+            with self.store.connect() as db:
+                featured = self.daily_featured(db, kind, where, args, day)
+                rows = db.execute('SELECT id FROM vod_items WHERE '+where+' ORDER BY title COLLATE NOCASE,id', args).fetchall()
+            groups.append((kind, featured, rows))
+        # Enqueue both kinds' featured images before the potentially large tail.
+        for kind, featured, _ in groups:
+            for row in featured:
+                for asset in ('backdrop', 'poster'):
+                    yield configuration[2], kind, row['id'], asset, 0
+        for kind, _, rows in groups:
+            for index, row in enumerate(rows):
+                for asset in ('poster', 'backdrop'):
+                    yield configuration[2], kind, row['id'], asset, 1 if index < 60 else 5
+
     def cover_url(self, kind, key):
         if kind not in ('movie', 'series', 'episode'):
             raise ValueError('Ongeldige cover.')

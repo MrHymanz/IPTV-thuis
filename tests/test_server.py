@@ -98,6 +98,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'href="/theme.css"', html)
 
     def test_mobile_vod_routes_require_auth_and_keep_covers_on_server(self):
+        self.store.set_setting('source', 'https://provider.test/get.php?username=test&password=test')
         for path in ('/api/mobile/vod', '/api/mobile/vod/detail', '/api/mobile/vod/cover'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)
         with patch.object(self.server.vod, 'catalog', return_value={'items': [], 'categories': []}) as catalog:
@@ -149,6 +150,7 @@ class ServerTests(unittest.TestCase):
             test.assert_called_once()
 
     def test_provider_artwork_keeps_priority_and_broken_images_use_fallback(self):
+        self.store.set_setting('source', 'https://provider.test/get.php?username=test&password=test')
         with patch.object(self.server.vod, 'cover_url', return_value='https://private.test/cover'), \
                 patch.object(self.server.logos, 'get', return_value=(b'provider', 'image/jpeg')), \
                 patch.object(self.server.artwork, 'fallback') as fallback:

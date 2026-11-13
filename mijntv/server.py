@@ -19,7 +19,7 @@ from .streams import StreamHub
 from .mobile import MobilePlayback
 from .vod import VOD
 from .thumbnails import RecordingThumbnails
-from .artwork import Artwork
+from .artwork import Artwork, ArtworkWarmer
 
 
 def hash_password(password, salt):
@@ -59,8 +59,11 @@ class AdminServer(ThreadingHTTPServer):
         self.artwork = Artwork(store, self.vod, self.logos)
         self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
+        self.artwork_warmer = ArtworkWarmer(self.artwork)
 
     def server_close(self):
+        if hasattr(self, 'artwork_warmer'):
+            self.artwork_warmer.close()
         if hasattr(self, 'thumbnails'):
             self.thumbnails.close()
         if hasattr(self, 'vod'):
@@ -133,18 +136,11 @@ class Handler(BaseHTTPRequestHandler):
                 asset = params.get('asset', ['poster'])[0]
                 if asset not in ('poster', 'backdrop'):
                     raise ValueError('Ongeldig afbeeldingstype.')
-                url = self.server.vod.cover_url(kind, key) if asset == 'poster' else self.server.vod.backdrop_url(kind, key)
                 try:
-                    if not url:
-                        raise ValueError('Geen providerafbeelding.')
-                    data, mime = self.server.logos.get(url)
+                    data, mime = self.server.artwork.get(kind, key, asset)
                     self.reply(200, data, mime)
                 except ValueError:
-                    try:
-                        data, mime = self.server.artwork.fallback(kind, key, asset)
-                        self.reply(200, data, mime)
-                    except ValueError:
-                        self.reply(404, {'error': 'Afbeelding niet beschikbaar.'})
+                    self.reply(404, {'error': 'Afbeelding niet beschikbaar.'})
             elif parts.path == '/api/mobile/guide':
                 guide = self.server.recordings.catchup.guide(params.get('id', [''])[0])
                 fields = ('start', 'end', 'title', 'description', 'archive', 'archive_days')

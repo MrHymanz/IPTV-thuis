@@ -1,6 +1,8 @@
 """Optional TMDB artwork fallback. Credentials and provider URLs stay server-side."""
 import hashlib
 import json
+import queue
+import itertools
 import re
 import threading
 import time
@@ -35,6 +37,34 @@ class Artwork:
         with store.connect() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS tmdb_artwork (
                 key TEXT PRIMARY KEY, data TEXT NOT NULL, expires REAL NOT NULL)''')
+            db.execute('CREATE TABLE IF NOT EXISTS artwork_fallbacks (key TEXT PRIMARY KEY, expires REAL NOT NULL)')
+
+    def get(self, kind, identifier, asset='poster'):
+        if asset not in ('poster', 'backdrop'):
+            raise ValueError('Ongeldig afbeeldingstype.')
+        # Validate current provider and category access even on a warm cache hit.
+        url = self.vod.cover_url(kind, identifier) if asset == 'poster' else self.vod.backdrop_url(kind, identifier)
+        signature = self.vod.configuration()[2]
+        key = hashlib.sha256(json.dumps([signature, kind, identifier, asset, url,
+                                        self.store.setting('tmdb_key')]).encode()).hexdigest()
+        with self.store.connect() as db:
+            row = db.execute('SELECT expires FROM artwork_fallbacks WHERE key=?', (key,)).fetchone()
+        if row and row['expires'] > time.time():
+            try:
+                return self.fallback(kind, identifier, asset)
+            except ValueError:
+                pass
+        if url:
+            try:
+                return self.logos.get(url)
+            except ValueError:
+                pass
+        result = self.fallback(kind, identifier, asset)
+        # A successful alternative must not wait on the same broken provider
+        # image again on every five-minute negative-cache expiry or restart.
+        with self.store.connect() as db:
+            db.execute('INSERT OR REPLACE INTO artwork_fallbacks VALUES (?,?)', (key, time.time()+6*3600))
+        return result
 
     def status(self):
         return {'configured': bool(self.store.setting('tmdb_key')), 'error': self.error}
@@ -174,3 +204,63 @@ class Artwork:
             if self.store.setting('tmdb_key') != key:
                 raise ValueError('TMDB-instelling gewijzigd.')
             return result
+
+
+class ArtworkWarmer:
+    """Three bounded download workers; featured artwork precedes catalogue scans."""
+    def __init__(self, artwork):
+        self.artwork = artwork
+        self.closed = threading.Event()
+        self.lock = threading.Lock()
+        self.pending, self.retry = set(), {}
+        self.tasks = queue.PriorityQueue(maxsize=4096)
+        self.counter = itertools.count()
+        self.threads = [threading.Thread(target=self.run, daemon=True) for _ in range(3)]
+        self.threads.append(threading.Thread(target=self.scan, daemon=True))
+        for worker in self.threads:
+            worker.start()
+
+    def fill(self):
+        for signature, kind, identifier, asset, priority in self.artwork.vod.artwork_candidates():
+            if self.closed.is_set():
+                return
+            key = (signature, kind, identifier, asset)
+            with self.lock:
+                if key in self.pending or self.retry.get(key, 0) > time.monotonic():
+                    continue
+                try:
+                    self.tasks.put_nowait((priority, next(self.counter), key))
+                except queue.Full:
+                    return
+                self.pending.add(key)
+
+    def scan(self):
+        while not self.closed.is_set():
+            try:
+                self.fill()
+            except Exception:
+                pass  # Missing configuration or transient provider/DB failure.
+            self.closed.wait(30)
+
+    def run(self):
+        while not self.closed.is_set():
+            try:
+                _, _, key = self.tasks.get(timeout=1)
+            except queue.Empty:
+                continue
+            delay = 300
+            try:
+                signature, kind, identifier, asset = key
+                if self.artwork.vod.configuration()[2] == signature:
+                    self.artwork.get(kind, identifier, asset)
+                    delay = 6*3600
+            except Exception:
+                pass  # Private URLs and keys must never reach logs.
+            finally:
+                with self.lock:
+                    self.pending.discard(key)
+                    self.retry[key] = time.monotonic()+delay
+                self.tasks.task_done()
+
+    def close(self):
+        self.closed.set()
