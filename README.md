@@ -169,7 +169,7 @@ De beheerbackend gebruikt alleen de Python-standaardbibliotheek. De tv-interface
 - `admin.json`: gezouten PBKDF2-hash van het beheerwachtwoord.
 - `first-login.txt`: eerste wachtwoord om na een onbeheerde herstart te kunnen inloggen. Bewaar het in je wachtwoordmanager en verwijder dit bestand daarna desgewenst. De app toont dit wachtwoord alleen zolang er geen favorieten zijn.
 
-Nieuwe gegevensbestanden zijn alleen toegankelijk voor de eigen gebruiker. Provideradressen worden niet teruggestuurd in catalogus/favorieten-API's, niet gelogd en niet in mpv-procesargumenten gezet. Een databaseback-up bevat wel providergegevens. Het beheer gebruikt HTTP Basic-authenticatie en bescherming tegen aanvragen vanuit andere websites. De ingebouwde HTTP-server is bedoeld voor het eigen LAN; gebruik HTTPS via een reverse proxy als je versleuteld beheer nodig hebt.
+Nieuwe gegevensbestanden zijn alleen toegankelijk voor de eigen gebruiker. Provideradressen worden niet teruggestuurd in catalogus/favorieten-API's, niet gelogd en niet in mpv-procesargumenten gezet. Een databaseback-up bevat wel providergegevens. Browsers gebruiken een gewone inlogpagina met gebruikersnaam/wachtwoord en een tijdelijke, hostgebonden sessiecookie. De inlogvelden ondersteunen wachtwoordmanagers via `autocomplete="username"` en `autocomplete="current-password"`. Native tv-/streamclients kunnen HTTP Basic-authenticatie blijven gebruiken. Aanvragen vanuit andere websites worden geweigerd. De ingebouwde HTTP-server is bedoeld voor het eigen LAN; gebruik HTTPS via een reverse proxy als je versleuteld beheer nodig hebt.
 
 Wachtwoord wijzigen (sluit de app eerst met Ctrl+Q):
 

@@ -55,6 +55,35 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/admin')[0], 200)
         self.assertEqual(self.request('GET', '/api/channels?offset=no')[0], 400)
 
+    def test_browser_form_session_and_logout_preserve_native_basic_auth(self):
+        import re
+        from urllib.parse import urlencode
+        origin = 'https://127.0.0.1:'+str(self.port)
+        def request(method, path, body=None, cookie='', basic=False, browser=True):
+            c=HTTPConnection('127.0.0.1',self.port,timeout=5)
+            headers={'X-Forwarded-Proto':'https'}
+            if browser: headers['User-Agent']='Mozilla/5.0'
+            if cookie: headers['Cookie']=cookie
+            if basic: headers['Authorization']='Basic '+base64.b64encode(b'admin:test-password-123').decode()
+            if body is not None:
+                body=urlencode(body);headers.update({'Origin':origin,'Content-Type':'application/x-www-form-urlencoded'})
+            c.request(method,path,body,headers);r=c.getresponse();result=(r.status,r.getheaders(),r.read());c.close();return result
+        status,headers,body=request('GET','/auth/login')
+        csrf=re.search(rb'name="csrf" value="([^"]+)"',body)[1].decode()
+        challenge=next(v.split(';')[0] for k,v in headers if k.lower()=='set-cookie')
+        self.assertEqual(status,200)
+        self.assertNotIn('WWW-Authenticate',dict(request('GET','/api/status')[1]))
+        self.assertIn('WWW-Authenticate',dict(request('GET','/api/status',browser=False)[1]))
+        status,headers,_=request('POST','/auth/login',{'username':'admin','password':'test-password-123','csrf':csrf},challenge)
+        self.assertEqual(status,303)
+        cookie=next(v.split(';')[0] for k,v in headers if k.lower()=='set-cookie' and v.startswith('__Host-iptv_session='))
+        self.assertEqual(request('GET','/api/status',cookie=cookie)[0],200)
+        status,headers,_=request('POST','/auth/logout',{},cookie)
+        self.assertEqual(status,303)
+        tombstone=next(v.split(';')[0] for k,v in headers if k.lower()=='set-cookie')
+        self.assertEqual(request('GET','/api/status',cookie=tombstone,basic=True)[0],401)
+        self.assertEqual(request('GET','/api/status',basic=True,browser=False)[0],200)
+
     def test_backup_account_setup_status_refresh_and_remove(self):
         playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="npo1" group-title="NL| TV",NL| NPO 1 HD\nhttps://backup.test/private-stream\n'
         self.store.import_playlist(playlist.replace('backup.test', 'primary.test'))

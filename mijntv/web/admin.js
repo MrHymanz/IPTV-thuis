@@ -5,6 +5,7 @@ function message(text, error = false) { $('message').textContent = text; $('mess
 async function api(path, body) {
   const file = body instanceof File;
   const response = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':file ? 'application/octet-stream' : 'application/json', 'X-MijnTV':'1'}, body:file ? body : JSON.stringify(body)});
+  if(response.status===401){location.assign('/auth/login?next='+encodeURIComponent(location.pathname+location.search+location.hash));throw new Error('Log opnieuw in.');}
   const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Aanvraag mislukt.'); return result;
 }
 function button(label, action, secondary = true) { const b = document.createElement('button'); b.textContent = label; if (secondary) b.className = 'secondary'; b.onclick = action; return b; }

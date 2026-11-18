@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .browser_auth import BrowserSessions, same_origin
 from .store import MAX_PLAYLIST, xtream_playlist_url
 from .backup import BackupAccount
 from .logos import LogoCache
@@ -49,6 +50,7 @@ class AdminServer(ThreadingHTTPServer):
 
     def __init__(self, address, store, auth, web_directory):
         self.store, self.auth, self.web_directory = store, auth, Path(web_directory)
+        self.browser_auth = BrowserSessions('iptv_session')
         self.logos = LogoCache(Path(store.path).parent)
         self.epg = EPG(store)
         self.display = Display(store)
@@ -95,7 +97,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def verify_browser_credentials(self, username, password):
+        return username == 'admin' and hmac.compare_digest(hash_password(password, self.server.auth['salt']), self.server.auth['hash'])
+
     def authorized(self):
+        browser = self.server.browser_auth
+        if browser.authenticated(self): return True
+        if browser.cookie(self) is not None: return browser.require(self)
         try:
             kind, value = self.headers.get('Authorization', '').split(' ', 1)
             user, password = base64.b64decode(value, validate=True).decode().split(':', 1)
@@ -104,10 +112,17 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         except (ValueError, UnicodeError):
             pass
-        self.reply(401, {'error': 'Log in als admin.'}, extra={'WWW-Authenticate': 'Basic realm="Mijn TV beheer", charset="UTF-8"'})
-        return False
+        # Native TV/stream clients may need a Basic challenge; web browsers use the form.
+        web_browser = ('Mozilla' in self.headers.get('User-Agent', '') or
+                       bool(self.headers.get('Sec-Fetch-Mode')) or
+                       'text/html' in self.headers.get('Accept', ''))
+        if not web_browser:
+            self.reply(401, {'error': 'Log in als admin.'}, extra={'WWW-Authenticate': 'Basic realm="Mijn TV beheer", charset="UTF-8"'})
+            return False
+        return browser.require(self)
 
     def do_GET(self):
+        if self.server.browser_auth.route(self, self.verify_browser_credentials, 'IPTV thuis'): return
         if not self.authorized():
             return
         parts = urlsplit(self.path)
@@ -219,6 +234,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, {'error': 'Er ging iets mis bij het lezen. Probeer opnieuw.'})
 
     def do_POST(self):
+        if self.server.browser_auth.route(self, self.verify_browser_credentials, 'IPTV thuis'): return
+        if self.server.browser_auth.authenticated(self) and not same_origin(self):
+            self.reply(403, {'error': 'Ongeldige aanvraag.'}); return
         if not self.authorized():
             return
         # A custom header and JSON force cross-origin browser requests to preflight;

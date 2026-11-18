@@ -20,6 +20,7 @@ function element(tag, className, text) { const e = document.createElement(tag); 
 function action(text, callback, className='text-button') { const e = element('button',className,text); e.type='button'; e.onclick=callback; return e; }
 async function api(path, body, keepalive=false) {
   const response = await fetch(path, body === undefined ? {credentials:'same-origin',cache:'no-store'} : {method:'POST',credentials:'same-origin',keepalive,headers:{'Content-Type':'application/json','X-MijnTV':'1'},body:JSON.stringify(body)});
+  if(response.status===401){location.assign('/auth/login?next='+encodeURIComponent(location.pathname+location.search+location.hash));throw new Error('Log opnieuw in.');}
   const result = await response.json();
   if (!response.ok) throw Error(response.status === 401 ? 'Log opnieuw in op je mediacenter.' : result.error || 'De verbinding is onderbroken.');
   return result;
