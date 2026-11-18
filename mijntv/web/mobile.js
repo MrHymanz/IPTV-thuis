@@ -680,6 +680,7 @@ function updateTimeline() {
 }
 function seek(target) {
   if(!player||!Number.isFinite(target))return;
+  cancelNext(true);nextRequestFullscreen=false;
   if(player.native_vod){video.currentTime=Math.max(0,Math.min(target,player.duration-.1));preview=null;updateTimeline();}
   else if(player.kind==='live'){if(video.seekable.length)video.currentTime=Math.max(video.seekable.start(0),Math.min(target,video.seekable.end(video.seekable.length-1)-.3));preview=null;updateTimeline();}
   else openPlayer({...request,position:Math.max(0,Math.min(target,player.duration?player.duration-1:7*86400))});
@@ -723,6 +724,7 @@ video.addEventListener('playing',()=>{if(player?.kind==='live'){store(localStora
 video.addEventListener('waiting',()=>{if(player&&video.readyState<3)setLoading('Even laden…','buffering');});
 video.addEventListener('error',()=>{if(player&&!attaching&&$('player').open)recoverPlayer('De videostream kon niet worden geladen.');});
 for(const event of ['pause','play'])video.addEventListener(event,()=>{
+  if(event==='play'&&nextCandidate)cancelNext(true);
   updateTimeline();if(!player||attaching||!player.ready)return;const paused=video.paused;if(lastPause===paused)return;lastPause=paused;
   if(hls&&player.kind!=='live'){if(paused)hls.stopLoad();else hls.startLoad();}
   api('/api/mobile/pause',{token:player.token,paused}).catch(()=>{});
