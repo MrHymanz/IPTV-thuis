@@ -16,7 +16,7 @@ class SeekableVOD:
         return session.get('native_vod', False) and session.get('duration_verified', False)
 
     @staticmethod
-    def playlist(session):
+    def playlist(session, captions=False):
         duration = session['duration']
         lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:1', '#EXT-X-MEDIA-SEQUENCE:0',
                  '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-INDEPENDENT-SEGMENTS']
@@ -24,7 +24,7 @@ class SeekableVOD:
         if initial:
             lines.append('#EXT-X-START:TIME-OFFSET='+str(initial)+',PRECISE=YES')
         for index in range(math.ceil(duration)):
-            lines.extend(('#EXTINF:'+format(min(1, duration-index), '.6f')+',', 'segment'+format(index, '06d')+'.ts'))
+            lines.extend(('#EXTINF:'+format(min(1, duration-index), '.6f')+',', ('caption' if captions else 'segment')+format(index, '06d')+('.vtt' if captions else '.ts')))
         lines.append('#EXT-X-ENDLIST')
         return ('\n'.join(lines)+'\n').encode(), 'application/vnd.apple.mpegurl'
 
@@ -49,18 +49,22 @@ class SeekableVOD:
         # concat needs an explicit duration for efficient random access. This
         # value came from its first decoded frame, not rounded provider metadata.
         manifest = Path(session['directory'].name)/'input.ffconcat'
-        content = '\n'.join(line for line in manifest.read_text().splitlines() if not line.startswith('duration '))
-        manifest.write_text(content+'\nduration '+str(session['duration'])+'\n')
+        if manifest.exists() and session.get('duration_verified'):
+            content = '\n'.join(line for line in manifest.read_text().splitlines() if not line.startswith('duration '))
+            manifest.write_text(content+'\nduration '+str(session['duration'])+'\n')
         command = list(session['command'])
         if '-ss' in command:
-            command[command.index('-ss')+1] = str(index)
-        else:
+            if index:command[command.index('-ss')+1] = str(index)
+            else:
+                position=command.index('-ss');del command[position:position+2]
+        elif index:
             position = command.index('-re')
             command[position:position] = ['-ss', str(index)]
-        command[command.index('-output_ts_offset')+1] = str(index)
-        command[command.index('-start_number')+1] = str(index)
+        if '-output_ts_offset' in command:command[command.index('-output_ts_offset')+1] = str(index)
+        if '-start_number' in command:command[command.index('-start_number')+1] = str(index)
+        elif session.get('subtitle_id') is not None:command[-1:-1]=['-start_number',str(index)]
         command[command.index('-hls_segment_filename')+1] = str(output/'segment%06d.ts')
-        command[-1] = str(output/'index.m3u8')
+        command[-1] = str(output/('index_%v.m3u8' if session.get('subtitle_id') is not None else 'index.m3u8'))
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError:
@@ -69,11 +73,19 @@ class SeekableVOD:
         session.update(process=process, command=command, output=output, first_segment=index,
                        last_served=index-1, failure='unknown', decoded=False, state='loading',
                        transcoder_at=time.monotonic(), ready_logged=False)
-        mobile.streams.mobile = {'owner':session['token'], 'key':session['account'], 'stop':session['preempt']}
+        if session['account']:
+            mobile.streams.mobile = {'owner':session['token'], 'key':session['account'], 'stop':session['preempt']}
         mobile._observe(session)
         shutil.rmtree(previous, ignore_errors=True)
 
-    def segment(self, token, index):
+    @staticmethod
+    def caption_ready(session,name):
+        # FFmpeg writes VTT directly; the atomic playlist publishes it only
+        # after its cues have been flushed. An existing file may still be empty.
+        try:return name in (session['output']/'index_0_vtt.m3u8').read_text().splitlines()
+        except OSError:return False
+
+    def segment(self, token, index, caption=False):
         mobile = self.mobile
         with mobile.streams.lock:
             session = mobile._session(token)
@@ -81,9 +93,9 @@ class SeekableVOD:
                 raise ValueError('Dit videodeel valt buiten de film of aflevering.')
             if session['state'] in ('stopped', 'preempted', 'error') or mobile.closed.is_set():
                 raise ValueError('De mobiele speler is gestopt.')
-            name = 'segment'+format(index, '06d')+'.ts'
+            name = 'index_0'+str(index)+'.vtt' if caption else 'segment'+format(index, '06d')+'.ts'
             path = session['output']/name
-            if not path.exists() and (index < session['first_segment'] or index <= session['last_served'] or
+            if not path.exists() and (index < session['first_segment'] or (index <= session['last_served'] and (not caption or not (session['output']/('segment'+format(index,'06d')+'.ts')).exists())) or
                                       index > max(session['first_segment'], session['last_served'])+8):
                 self.restart(session, index)
             generation = session['seek_generation']
@@ -97,12 +109,12 @@ class SeekableVOD:
                     raise ValueError('De mobiele speler is gestopt.')
                 session['seen'] = time.monotonic()
                 path = session['output']/name
-                if path.is_file() and not path.is_symlink():
+                if path.is_file() and not path.is_symlink() and (not caption or self.caption_ready(session,name)):
                     data = path.read_bytes()
                     session['last_served'] = max(session['last_served'], index)
                     if session['paused'] and session['process'].poll() is None:
                         session['process'].send_signal(signal.SIGSTOP)
-                    return data, 'video/mp2t'
+                    return (mobile.caption_data(data), 'text/vtt') if caption else (data, 'video/mp2t')
                 code = session['process'].poll()
                 if code is not None:
                     if code:

@@ -60,6 +60,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.store.setting('image_cache_gb'), '1')
         self.assertEqual(self.request('POST', '/api/mobile/resume', {'signature':'old','items':[]}, custom=False)[0], 403)
 
+    def test_shared_library_and_language_routes_require_login_and_same_origin(self):
+        self.assertEqual(self.request('GET','/api/mobile/library',auth=False)[0],401)
+        status,raw=self.request('GET','/api/mobile/library')
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['profile']['name'],'Thuis')
+        for path in ('/api/mobile/library','/api/mobile/library/import','/api/mobile/progress','/api/mobile/preferences','/api/mobile/tracks'):
+            self.assertEqual(self.request('POST',path,{},auth=False)[0],401)
+            self.assertEqual(self.request('POST',path,{},custom=False)[0],403)
+        self.assertEqual(self.request('GET','/api/mobile/library?profile=unknown')[0],400)
+        status,raw=self.request('POST','/api/mobile/preferences',{'preferences':{'autoplay_next':False,'subtitle_language':'off'}})
+        self.assertEqual(status,200);self.assertFalse(json.loads(raw)['profile']['preferences']['autoplay_next'])
+        with patch.object(self.server.mobile,'select_tracks',return_value={'token':'safe','tracks':{}}) as choose:
+            body={'token':'safe','position':100,'audio':2,'subtitle':None}
+            self.assertEqual(self.request('POST','/api/mobile/tracks',body)[0],200)
+            choose.assert_called_once_with(body)
+
     def test_discovery_filter_and_variant_routes_pass_validated_scope(self):
         with patch.object(self.server.vod, 'catalog', return_value={'items':[], 'categories':[]}) as catalog:
             self.assertEqual(self.request('GET', '/api/mobile/vod?kind=movie&genre=Drama&year=2001&min_rating=8&length=medium')[0], 200)
@@ -225,7 +240,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(self.request('POST','/api/mobile/play',body,origin='https://evil.test')[0],403)
             start.assert_not_called()
             self.assertEqual(self.request('POST','/api/mobile/play',body)[0],200)
-            start.assert_called_once_with(body)
+            start.assert_called_once_with(dict(body,subtitle_language='nl'))
         with patch.object(self.server.mobile,'asset',return_value=(b'#EXTM3U','application/vnd.apple.mpegurl')) as asset:
             self.assertEqual(self.request('GET','/api/mobile/hls/session/index.m3u8',auth=False)[0],401)
             asset.assert_not_called()

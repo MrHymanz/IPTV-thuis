@@ -10,11 +10,14 @@ function playbackMutation(path, body) {
   return pending;
 }
 let homeContext={signature:''}, homeResumeGeneration=0, heroPreviewKey='';
+let nativeCountdownExit=false,nextWasFullscreen=false,nextRequestFullscreen=false;
+let sharedLibrary=null, libraryRequest=null, progressQueue=Promise.resolve(), nextCandidate=null, nextTimer=null, nextDeadline=0;
+let activeProfile='home';
 let playerExpanded=false, nativePlayerFullscreen=false, nativeVideoFullscreen=false;
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
 function store(storage,key,value) {try{if(value===null)storage.removeItem(key);else storage.setItem(key,value);}catch(_){}}
-function resume(id) {try{return JSON.parse(stored(localStorage,'iptv-position-'+id)||'null');}catch(_){return null;}}
+function resume(id) {if(sharedLibrary)return sharedLibrary.positions[id]||null;try{return JSON.parse(stored(localStorage,'iptv-position-'+id)||'null');}catch(_){return null;}}
 const clock = value => new Date(value * 1000).toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit'});
 const date = value => new Date(value * 1000).toLocaleDateString('nl-NL', {day:'numeric', month:'short'});
 const time = value => { const s = Math.max(0, Math.floor(value || 0)); return (s >= 3600 ? Math.floor(s / 3600) + ':' : '') + (s >= 3600 ? String(Math.floor(s % 3600 / 60)).padStart(2,'0') : Math.floor(s / 60)) + ':' + String(s % 60).padStart(2,'0'); };
@@ -105,19 +108,98 @@ function updateHeroPreview(channel) {
   image.onerror=()=>{image.hidden=true;label.hidden=true;if(attempt++<2)setTimeout(()=>{if(heroPreviewKey===key&&!document.hidden)image.src=address+'&attempt='+attempt;},4000);};
   image.src=address;
 }
+function localJson(key,fallback=[]){try{return JSON.parse(stored(localStorage,key)||'null')||fallback;}catch(_){return fallback;}}
+function applySharedLibrary(state){
+  sharedLibrary=state;
+  $('watch-profile-name').textContent=state.profile.name;
+  $('autoplay-next').checked=state.profile.preferences.autoplay_next;
+  $('default-subtitles').value=state.profile.preferences.subtitle_language;
+  $('library-sync-status').textContent='Kijklijst en voortgang zijn gesynchroniseerd.';
+  if(typeof renderRecordings==='function')renderRecordings();
+}
+function localLibraryImport(signature){
+  const storedSaved=localJson('iptv-vod-saved-'+signature),storedHistory=localJson('iptv-vod-history-'+signature);
+  const saved=(Array.isArray(storedSaved)?storedSaved:[]).filter(item=>item&&['movie','series'].includes(item.kind)).map(item=>({kind:item.kind,id:item.id}));
+  const progress=new Map();
+  for(const item of (Array.isArray(storedHistory)?storedHistory:[])){
+    if(!item)continue;const kind=item.kind==='series'?'episode':'movie',id=item.episode?.id||item.id;
+    if(id&&item.position>0)progress.set(kind+':'+id,{kind,id,position:item.position,duration:item.duration||0});
+  }
+  try{for(let index=0;index<localStorage.length&&progress.size<1000;index++){
+    const key=localStorage.key(index),prefix='iptv-position-'+signature+'-';let kind,id;
+    if(key.startsWith(prefix)){const match=key.slice(prefix.length).match(/^(movie|episode)-([0-9]+)$/);if(!match)continue;kind=match[1];id=match[2];}
+    else if(/^iptv-position-[a-f0-9]{32}$/.test(key)){kind='recording';id=key.slice('iptv-position-'.length);}
+    else continue;
+    const entry=localJson(key,null);if(entry&&entry.position>0&&!progress.has(kind+':'+id))progress.set(kind+':'+id,{kind,id,position:entry.position,duration:entry.duration||0});
+  }}catch(_){}
+  let client=stored(localStorage,'iptv-library-client');if(!client){client=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);store(localStorage,'iptv-library-client',client);}
+  return {profile:activeProfile,signature,client,saved:saved.slice(0,300),progress:[...progress.values()]};
+}
+async function refreshSharedLibrary(){
+  if(libraryRequest)return libraryRequest;
+  libraryRequest=(async()=>{
+    await progressQueue;
+    let state=await api('/api/mobile/library?profile='+encodeURIComponent(activeProfile));
+    const marker='iptv-library-imported-'+activeProfile+'-'+state.signature;
+    if(!stored(localStorage,marker)){
+      state=await api('/api/mobile/library/import',localLibraryImport(state.signature));store(localStorage,marker,'1');
+    }
+    applySharedLibrary(state);return state;
+  })();
+  try{return await libraryRequest;}finally{libraryRequest=null;}
+}
+function syncPlaybackProgress(ended=false){
+  if(!player||!request||!['movie','episode','recording'].includes(player.kind))return Promise.resolve();
+  const key=playbackKey(request),current=position(),duration=player.duration||0;
+  const completed=ended||!!(duration&&current>=duration-10);
+  if(sharedLibrary)sharedLibrary.positions[key]={position:completed?0:current,duration,completed,watched:completed||!!sharedLibrary.positions[key]?.watched};
+  const data={token:player.token,sequence:(player.progress_sequence=(player.progress_sequence||0)+1),position:current,duration,ended};
+  progressQueue=progressQueue.catch(()=>{}).then(()=>api('/api/mobile/progress',data,true)).then(()=>{
+    $('library-sync-status').textContent='Kijklijst en voortgang zijn gesynchroniseerd.';
+  }).catch(()=>{$('library-sync-status').textContent='Voortgang kon nog niet worden gesynchroniseerd. Controleer je verbinding.';});
+  return progressQueue;
+}
+function cancelNext(clear=false){
+  clearInterval(nextTimer);nextTimer=null;nextDeadline=0;
+  if(clear){nextCandidate=null;nextWasFullscreen=false;$('up-next').hidden=true;}
+  else if(nextCandidate){$('up-next-status').textContent='Automatisch starten geannuleerd.';$('up-next-cancel').hidden=true;}
+}
+function startNext(){
+  const next=nextCandidate;if(!next||!$('player').open)return;
+  const returnFullscreen=nextWasFullscreen;cancelNext(true);nextRequestFullscreen=returnFullscreen;playVod(next.library,next.episode,true);
+}
+function scheduleNext(){
+  cancelNext(true);if(!player||player.kind!=='episode'||!player.next_episode)return;
+  nextCandidate=player.next_episode;$('up-next').hidden=false;
+  if(nativeVideoFullscreen&&video.webkitExitFullscreen){nextWasFullscreen=true;nativeCountdownExit=true;try{video.webkitExitFullscreen();}catch(_){nativeCountdownExit=false;}}
+  $('up-next-title').textContent='Hierna: seizoen '+nextCandidate.episode.season+', aflevering '+nextCandidate.episode.number+' · '+nextCandidate.episode.title;
+  if(sharedLibrary?.profile.preferences.autoplay_next===false||document.hidden){$('up-next-status').textContent='Klaar voor de volgende aflevering.';$('up-next-cancel').hidden=true;return;}
+  nextDeadline=Date.now()+10000;$('up-next-cancel').hidden=false;
+  const tick=()=>{
+    const remaining=Math.max(0,Math.ceil((nextDeadline-Date.now())/1000));
+    $('up-next-status').textContent='Begint automatisch over '+remaining+' seconden.';
+    if(!remaining){clearInterval(nextTimer);nextTimer=null;if(document.hidden)cancelNext();else startNext();}
+  };
+  tick();nextTimer=setInterval(tick,250);
+}
+$('up-next-play').onclick=startNext;$('up-next-cancel').onclick=()=>cancelNext();
+async function saveWatchPreferences(){
+  try{const result=await api('/api/mobile/preferences',{profile:activeProfile,preferences:{autoplay_next:$('autoplay-next').checked,subtitle_language:$('default-subtitles').value}});if(sharedLibrary)sharedLibrary.profile=result.profile;if(!result.profile.preferences.autoplay_next)cancelNext();$('library-sync-status').textContent='Kijkvoorkeuren opgeslagen.';}
+  catch(error){toast(error.message);}
+}
+$('autoplay-next').onchange=saveWatchPreferences;$('default-subtitles').onchange=saveWatchPreferences;
 async function refreshHomeContinue() {
   const generation=++homeResumeGeneration, signature=homeContext.signature;
-  let history=[];try{history=JSON.parse(stored(localStorage,'iptv-vod-history-'+signature)||'[]');}catch(_){}
-  if(!signature||!Array.isArray(history)||!history.length){$('home-continue').hidden=true;return;}
   try{
-    const result=await api('/api/mobile/resume',{signature,items:history.slice(0,12)});
+    const state=await refreshSharedLibrary();
     if(generation!==homeResumeGeneration||homeContext.signature!==signature)return;
+    const result={items:state.history};
     const rows=(result.items||[]).slice(0,8).map(item=>{
       const button=action('',()=>playVod(item,item.episode||null),'resume-card');
       const progress=item.duration?Math.round(item.position/item.duration*100):0;
       button.append(vodPoster(item,true),element('strong','',item.title));
       if(item.episode)button.append(element('span','small-muted','Seizoen '+item.episode.season+' · aflevering '+item.episode.number));
-      button.append(element('span','resume-action','▶ Verder vanaf '+time(item.position)));
+      button.append(element('span','resume-action',item.next_episode?'▶ Volgende aflevering':'▶ Verder vanaf '+time(item.position)));
       const track=element('span','vod-progress'),fill=element('span');fill.style.width=Math.min(100,progress)+'%';track.append(fill);button.append(track);
       return button;
     });
@@ -225,7 +307,7 @@ function matchesLocalVod(item){
   if(state.length&&(!duration||(state.length==='short'&&duration>=short)||(state.length==='medium'&&(duration<short||duration>medium))||(state.length==='long'&&duration<=medium)))return false;
   return true;
 }
-function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
+function vodLocal(name) {if(sharedLibrary&&sharedLibrary.signature===vodSignature)return name==='saved'?sharedLibrary.saved:sharedLibrary.history;try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
 function vodKey(item) {return item.kind+':'+item.id;}
 function playbackKey(data) {return ['movie','episode'].includes(data.kind)?data.signature+'-'+data.kind+'-'+data.id:data.id;}
@@ -311,9 +393,10 @@ function enterVod(kind) {
   renderVodFilterOptions();
   $('vod-category').replaceChildren(new Option('Alle categorieën',''));vodFilter='all';loadVod();
 }
-function saveVod(item) {
-  const list=vodLocal('saved'),key=vodKey(item),found=list.some(x=>vodKey(x)===key);
-  vodWrite('saved',found?list.filter(x=>vodKey(x)!==key):[item,...list]);toast(found?'Verwijderd uit je kijklijst.':'Toegevoegd aan je kijklijst.');renderVodActions();if(vodFilter==='saved')renderVod();
+async function saveVod(item) {
+  const has=vodLocal('saved').some(x=>vodKey(x)===vodKey(item));
+  try{const state=await api('/api/mobile/library',{profile:activeProfile,signature:vodSignature,kind:item.kind,id:item.id,saved:!has});applySharedLibrary(state);toast(has?'Verwijderd uit je kijklijst.':'Toegevoegd aan je kijklijst.');renderVodActions();if(vodFilter==='saved')renderVod();}
+  catch(error){toast(error.message);}
 }
 function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,cover:item.cover,year:item.year,rating:item.rating,category:item.category||'',display_title:item.display_title,genre:item.genre,duration:item.duration};}
 function playVod(item,episode=null,fromStart=false) {
@@ -335,7 +418,7 @@ function renderVodActions() {
 function renderVodEpisodes() {
   const item=vodSelected;if(!item)return;const season=Number($('vod-season').value),episodes=(item.episodes||[]).filter(e=>e.season===season);
   $('vod-episodes').replaceChildren(...episodes.map(ep=>{const row=action('',()=>playVod(item,ep),'vod-episode'),copy=element('div');copy.append(element('strong','',ep.title));const saved=resume(playbackKey({kind:'episode',id:ep.id,signature:item.signature}));
-    copy.append(element('small','',[ep.duration?Math.round(ep.duration/60)+' min':'',saved?.position>10?'Verder vanaf '+time(saved.position):''].filter(Boolean).join(' · ')));
+    copy.append(element('small','',[ep.duration?Math.round(ep.duration/60)+' min':'',saved?.watched?'✓ Bekeken':saved?.position>10?'Verder vanaf '+time(saved.position):''].filter(Boolean).join(' · ')));
     if(ep.description)copy.append(element('small','',ep.description.slice(0,180)));row.append(element('span','',String(ep.number).padStart(2,'0')),copy,element('span','','▷'));return row;}));
   if(!episodes.length)$('vod-episodes').append(element('p','empty','Geen afleveringen beschikbaar voor dit seizoen.'));
 }
@@ -360,6 +443,7 @@ async function openVodDetail(item) {
   }catch(error){if(generation===vodDetailGeneration&&$('vod-detail').open){$('vod-detail-notice').textContent=error.message;$('vod-detail-actions').replaceChildren(action('Opnieuw proberen',()=>openVodDetail(item),'primary-button'));}}
 }
 function saveVodProgress(ended=false) {
+  syncPlaybackProgress(ended);
   if(!request?.library||!player)return;const signature=request.signature,kind=request.kind;
   if(!['movie','episode'].includes(kind))return;
   const key='iptv-vod-history-'+signature;let list;try{list=JSON.parse(stored(localStorage,key)||'[]');if(!Array.isArray(list))list=[];}catch(_){list=[];}
@@ -387,7 +471,7 @@ function showView() {
   document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==(vod?'vod':view)+'-view');
   document.querySelectorAll('.nav-button').forEach(e=>{const active=e.dataset.go===(vod?'home':view);e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   document.querySelectorAll('.media-tabs button').forEach(e=>{const active=e.dataset.go===(vod?view:'home');e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
-  window.scrollTo(0,0); if(view==='guide'&&channels.length)loadGuide();if(vod)enterVod(view==='films'?'movie':'series');if(view==='home')refreshHomeContinue();
+  window.scrollTo(0,0); if(view==='guide'&&channels.length)loadGuide();if(vod){refreshSharedLibrary().then(()=>{if(vodFilter!=='all')renderVod();}).catch(()=>{});enterVod(view==='films'?'movie':'series');}if(view==='home')refreshHomeContinue();
 }
 function clearVideo() {
   attaching=true; clearTimeout(playerTimer); clearInterval(heartbeat); if(hls){hls.destroy();hls=null;}
@@ -421,8 +505,9 @@ function handlePlayerState(state) {
   return true;
 }
 async function openPlayer(data, automatic=false) {
+  cancelNext(true);
   if(!automatic) retries=0;
-  data={...data,native_vod:/Apple/.test(navigator.vendor)&&typeof video.webkitEnterFullscreen==='function'&&['movie','episode'].includes(data.kind)};
+  data={...data,profile:activeProfile,native_vod:/Apple/.test(navigator.vendor)&&typeof video.webkitEnterFullscreen==='function'&&['movie','episode'].includes(data.kind)};
   video.controls=!['movie','episode'].includes(data.kind);$('fullscreen').disabled=true;
   if(['recording','movie','episode'].includes(data.kind)&&data.position===undefined)data={...data,position:resume(playbackKey(data))?.position||0};
   const generation=++playerGeneration, previous=player?.token || stored(sessionStorage,'iptv-mobile-session');
@@ -444,7 +529,7 @@ async function openPlayer(data, automatic=false) {
     playbackQueue=pending.catch(()=>{});
     const result=await pending;
     if(!result||generation!==playerGeneration)return;
-    player=result.player; store(sessionStorage,'iptv-mobile-session',player.token);
+    player={...result.player,progress_sequence:0};renderPlayerLanguages(); store(sessionStorage,'iptv-mobile-session',player.token);
     $('player-title').textContent=player.title;$('player-channel').textContent=player.channel;$('player-kind').textContent=player.kind==='live'?'LIVE':player.kind==='archive'?'TERUGKIJKEN':player.kind==='movie'?'FILM':player.kind==='episode'?'SERIE':'OPNAME';
     $('go-live').hidden=player.kind!=='live';$('player-message').textContent=player.kind==='live'?'Je kijkt live. Spoelen kan binnen het gebufferde deel.':player.kind==='recording'?'Je opname speelt vanaf het gekozen moment.':['movie','episode'].includes(player.kind)?'Je kijkt op jouw moment. De tv en opnames houden voorrang.':'Je kijkt de gekozen uitzending terug.';
     setLoading('Verbinding maken met de aanbieder…');const started=Date.now();
@@ -479,7 +564,36 @@ async function recoverPlayer(message, generation=playerGeneration) {
   }catch(_){}
   if(generation===playerGeneration)restartPlayer(message);
 }
+function renderPlayerLanguages(){
+  const visible=!!player&&['movie','episode'].includes(player.kind);$('player-languages').hidden=!visible;
+  if(!visible)return;
+  const tracks=player.tracks||{},audio=tracks.audio||[],subtitles=tracks.subtitles||[];
+  $('player-audio').replaceChildren(...audio.map((track,index)=>new Option(track.label+(track.original?' · origineel':track.default?' · bronstandaard':index===0?' · origineel/bronstandaard':''),String(track.id))));
+  $('player-audio').value=String(tracks.audio_id??audio[0]?.id??'');$('player-audio').disabled=audio.length<2;
+  $('player-subtitles').replaceChildren(new Option('Uit','off'),...subtitles.filter(t=>t.supported).map(track=>new Option(track.label,String(track.id))));
+  $('player-subtitles').value=tracks.subtitle_id===null||tracks.subtitle_id===undefined?'off':String(tracks.subtitle_id);
+  $('player-subtitles').disabled=!subtitles.some(t=>t.supported);
+  $('player-language-note').textContent=!tracks.ready?'Beschikbare talen worden gelezen…':!subtitles.length?'Deze bron bevat geen losse ondertitels.':subtitles.some(t=>!t.supported)?'Beeldondertitels uit deze bron kunnen niet worden weergegeven. Kies een beschikbare tekstondertiteling.':'Je keuze geldt voor deze video. Op iPhone kun je ondertiteling ook in de fullscreenbediening wijzigen.';
+}
+async function changePlayerLanguage(){
+  if(!player)return;
+  cancelNext(true);saveVodProgress();
+  const generation=++playerGeneration,token=player.token,current=position();clearVideo();
+  $('player-audio').disabled=true;$('player-subtitles').disabled=true;setLoading('Je taalkeuze toepassen…');
+  try{
+    const result=await api('/api/mobile/tracks',{token,position:current,audio:$('player-audio').value?Number($('player-audio').value):null,subtitle:$('player-subtitles').value==='off'?null:Number($('player-subtitles').value)});
+    if(generation!==playerGeneration)return;player={...player,...result.player};request={...request,audio_track:result.player.tracks.audio_id,subtitle_track:result.player.tracks.subtitle_id};
+    const poll=async()=>{if(generation!==playerGeneration||!player)return;try{
+      const state=await api('/api/mobile/status?token='+encodeURIComponent(token));if(generation!==playerGeneration)return;
+      if(handlePlayerState(state))return;player={...player,...state};
+      if(state.ready){renderPlayerLanguages();attachVideo(generation);heartbeat=setInterval(()=>checkPlayer(generation),10000);}
+      else playerTimer=setTimeout(poll,500);
+    }catch(error){if(generation===playerGeneration)failPlayer(error.message);}};poll();
+  }catch(error){if(generation===playerGeneration){renderPlayerLanguages();failPlayer(error.message);}}
+}
+$('player-audio').onchange=changePlayerLanguage;$('player-subtitles').onchange=changePlayerLanguage;
 function attachVideo(generation) {
+  renderPlayerLanguages();
   if(!player||generation!==playerGeneration)return;
   for(const id of ['timeline','rewind','forward','pause'])$(id).disabled=false;attaching=true;setLoading('Video klaar. Even bufferen…','buffering');
   $('fullscreen').disabled=!!player.native_vod;
@@ -488,6 +602,7 @@ function attachVideo(generation) {
     if(generation!==playerGeneration||!player?.native_vod)return;
     $('fullscreen').disabled=false;
     if(player.initial_position>0)video.currentTime=Math.min(player.initial_position,player.duration-.1);
+    if(nextRequestFullscreen){nextRequestFullscreen=false;try{video.webkitEnterFullscreen();}catch(_){}}
   },{once:true});
   const nativeHls=video.canPlayType('application/vnd.apple.mpegurl');
   if(nativeHls&&/Apple/.test(navigator.vendor)){video.src=player.playlist;video.load();tryPlay();}
@@ -507,8 +622,8 @@ function restartPlayer(message) {
   setTimeout(()=>{if(generation===playerGeneration&&$('player').open)openPlayer({...request,position:resume},true);},600);
 }
 async function closePlayer() {
-  exitPlayerFullscreen();
-  const token=player?.token || stored(sessionStorage,'iptv-mobile-session'); if(player&&!video.ended&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:position(),duration:player.duration}));saveVodProgress();} ++playerGeneration;clearVideo();player=null;request=null;
+  cancelNext(true);nextRequestFullscreen=false;exitPlayerFullscreen();
+  const token=player?.token || stored(sessionStorage,'iptv-mobile-session'); if(player&&!video.ended&&['movie','episode','recording'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:position(),duration:player.duration}));saveVodProgress();} ++playerGeneration;clearVideo();player=null;request=null;
   if($('player').open)$('player').close();
   if(token)try{await playbackMutation('/api/mobile/stop',{token});if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}catch(_){}
   refreshHomeContinue();
@@ -538,7 +653,7 @@ async function togglePlayerFullscreen() {
   }
 }
 video.addEventListener('webkitbeginfullscreen',()=>{nativeVideoFullscreen=true;$('fullscreen').textContent='Kleiner scherm';$('fullscreen').setAttribute('aria-pressed','true');});
-video.addEventListener('webkitendfullscreen',()=>{nativeVideoFullscreen=false;setPlayerExpanded(false);});
+video.addEventListener('webkitendfullscreen',()=>{nativeVideoFullscreen=false;if(nativeCountdownExit)nativeCountdownExit=false;else if(nextTimer)cancelNext();setPlayerExpanded(false);});
 document.addEventListener('fullscreenchange',()=>{
   const active=document.fullscreenElement===$('player-surface');
   if(active&&(!playerExpanded||!$('player').open)){
@@ -603,7 +718,7 @@ video.addEventListener('volumechange',()=>{$('mute').textContent=video.muted?'Ge
 $('timeline').oninput=()=>{preview=Number($('timeline').value);$('elapsed').textContent=time(preview);};
 $('timeline').onchange=()=>{const target=Number($('timeline').value);preview=null;seek(target);};
 for(const event of ['timeupdate','durationchange','loadedmetadata','seeked'])video.addEventListener(event,updateTimeline);
-video.addEventListener('ended',()=>{if(player&&['recording','movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),null);saveVodProgress(true);}});
+video.addEventListener('ended',()=>{if(player&&['recording','movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),null);saveVodProgress(true);scheduleNext();}});
 video.addEventListener('playing',()=>{if(player?.kind==='live'){store(localStorage,'iptv-last-live-'+homeContext.signature,player.id||request.id);heroPreviewKey='';renderHome();}$('player-loading').hidden=true;setPlayerStage('playing');updateTimeline();});
 video.addEventListener('waiting',()=>{if(player&&video.readyState<3)setLoading('Even laden…','buffering');});
 video.addEventListener('error',()=>{if(player&&!attaching&&$('player').open)recoverPlayer('De videostream kon niet worden geladen.');});

@@ -22,6 +22,7 @@ from .vod import VOD
 from .thumbnails import RecordingThumbnails
 from .artwork import Artwork, ArtworkWarmer
 from .previews import LivePreviews
+from .library import Library
 
 
 def hash_password(password, salt):
@@ -64,6 +65,7 @@ class AdminServer(ThreadingHTTPServer):
         self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
         self.previews.mobile = self.mobile
+        self.library = Library(store, self.vod, self.recordings, self.mobile)
         self.artwork_warmer = ArtworkWarmer(self.artwork)
         self.logos.start()
 
@@ -144,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(200, self.server.previews.get(params.get('id', [''])[0]), 'image/jpeg')
                 except ValueError:
                     self.reply(404, {'error': 'Geen momentopname beschikbaar.'})
+            elif parts.path == '/api/mobile/library':
+                self.reply(200, self.server.library.snapshot(params.get('profile', ['home'])[0]))
             elif parts.path == '/api/mobile/home':
                 self.reply(200, self.server.vod.home_context())
             elif parts.path == '/api/mobile/vod':
@@ -276,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            limit = 256*1024 if path.startswith('/api/mobile-library') else 16384 if path.startswith(('/api/mobile/', '/api/artwork-settings')) else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
+            limit = 256*1024 if path.startswith('/api/mobile-library') or path == '/api/mobile/library/import' else 16384 if path.startswith(('/api/mobile/', '/api/artwork-settings')) else MAX_PLAYLIST if path == '/api/import/file' else MAX_PLAYLIST * 2
             if not 0 < length <= limit:
                 self.reply(413, {'error': 'Aanvraag te groot.' if path.startswith(('/api/mobile/', '/api/artwork-settings')) else 'Upload te groot (maximaal 512 MB M3U).'}); return
             if path == '/api/import/file':
@@ -288,7 +292,24 @@ class Handler(BaseHTTPRequestHandler):
             store = self.server.store
             result = {'ok': True}
             if path == '/api/mobile/play':
-                result['player'] = self.server.mobile.start(data)
+                profile=self.server.library.profile(data.get('profile', 'home'))
+                result['player'] = self.server.mobile.start(dict(data,subtitle_language=profile['preferences']['subtitle_language']))
+                if result['player'].get('kind') and result['player'].get('id') is not None:
+                    try:
+                        self.server.library.bind(result['player'], data.get('profile', 'home'))
+                    except (ValueError, OSError):
+                        self.server.mobile.stop(result['player']['token'])
+                        raise
+            elif path == '/api/mobile/library':
+                result.update(self.server.library.save(data))
+            elif path == '/api/mobile/library/import':
+                result.update(self.server.library.import_local(data))
+            elif path == '/api/mobile/progress':
+                result.update(self.server.library.progress(data))
+            elif path == '/api/mobile/tracks':
+                result['player'] = self.server.mobile.select_tracks(data)
+            elif path == '/api/mobile/preferences':
+                result['profile'] = self.server.library.preferences(data.get('profile', 'home'), data.get('preferences'))
             elif path == '/api/mobile-library':
                 self.server.vod.save_selection(data.get('selection'))
             elif path == '/api/mobile-library/imdb':

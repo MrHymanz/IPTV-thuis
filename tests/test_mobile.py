@@ -392,6 +392,52 @@ class QuietFiles(SimpleHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg needed for real HLS playback')
 class MobileHLSIntegration(unittest.TestCase):
+    def test_native_subtitles_and_audio_selection_share_one_seekable_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'sub.srt').write_text('1\n00:00:02,000 --> 00:00:03,500\nHallo wereld\n\n2\n00:00:06,000 --> 00:00:07,000\nTweede zin\n')
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=160x90:rate=25',
+                            '-f','lavfi','-i','sine=frequency=440','-f','lavfi','-i','sine=frequency=880',
+                            '-i',str(root/'sub.srt'),'-map','0:v','-map','1:a','-map','2:a','-map','3:s',
+                            '-t','9','-c:v','libx264','-preset','ultrafast','-threads','1','-c:a','aac','-c:s','srt',
+                            '-metadata:s:a:0','language=eng','-metadata:s:a:1','language=nld',
+                            '-metadata:s:s:0','language=nld',str(root/'video.mkv')],check=True,capture_output=True)
+            http=ThreadingHTTPServer(('127.0.0.1',0),partial(QuietFiles,directory=directory))
+            threading.Thread(target=http.serve_forever,daemon=True).start()
+            store=Store(root/'data');hub=StreamHub(store);recordings=Recordings(store,hub);vod=Mock()
+            vod.playback.return_value={'url':'http://127.0.0.1:'+str(http.server_port)+'/video.mkv',
+                'configuration':('fixture',{},'signature'),'title':'Proefvideo','label':'Film','duration':9}
+            mobile=MobilePlayback(store,recordings,hub,vod)
+            try:
+                player=mobile.start({'kind':'movie','id':'7','signature':'signature','native_vod':True})
+                def ready():
+                    deadline=time.monotonic()+15
+                    while time.monotonic()<deadline:
+                        state=mobile.status(player['token'])
+                        if state['ready'] or state['state']=='error':return state
+                        time.sleep(.1)
+                    self.fail('Proefvideo niet op tijd gereed')
+                state=ready();self.assertTrue(state['ready'],state);self.assertTrue(state['native_vod'],state)
+                self.assertEqual(len(state['tracks']['audio']),2)
+                self.assertEqual(state['tracks']['subtitle_id'],3)
+                master=mobile.asset(player['token'],'index.m3u8')[0].decode()
+                self.assertIn('LANGUAGE="nld"',master);self.assertIn('video.m3u8',master)
+                subtitle=mobile.asset(player['token'],'caption000002.vtt')[0].decode()
+                self.assertIn('Hallo wereld',subtitle);self.assertIn('MPEGTS:126000',subtitle)
+                self.assertIn('caption000006.vtt',mobile.asset(player['token'],'captions.m3u8')[0].decode())
+                old=mobile.sessions[player['token']]['process']
+                changed=mobile.select_tracks({'token':player['token'],'audio':2,'subtitle':None,'position':4})
+                self.assertEqual(changed['token'],player['token']);self.assertIsNotNone(old.poll())
+                state=ready();self.assertTrue(state['ready'],state)
+                self.assertEqual(state['tracks']['audio_id'],2);self.assertIsNone(state['tracks']['subtitle_id'])
+                session=mobile.sessions[player['token']]
+                self.assertEqual(session['command'][session['command'].index('-map',session['command'].index('-map')+1)+1],'0:2?')
+                self.assertNotIn('SUBTITLES',mobile.asset(player['token'],'index.m3u8')[0].decode())
+                with self.assertRaises(ValueError):mobile.select_tracks({'token':player['token'],'audio':99,'subtitle':None,'position':4})
+                self.assertEqual(len(mobile.sessions),1)
+            finally:
+                mobile.close();recordings.close();hub.close();http.shutdown();http.server_close()
+
     def test_movie_and_episode_have_short_playable_segments_including_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -16,6 +16,7 @@ import unicodedata
 from .streams import RecordingConflict
 from .vod import VOD
 from .seekable import SeekableVOD
+from . import tracks
 
 
 class MobilePlayback:
@@ -104,6 +105,9 @@ class MobilePlayback:
             raise ValueError('Ongeldig afspeeltype.')
         if offset > 7 * 86400 or (kind == 'live' and offset):
             raise ValueError('Ongeldige afspeelpositie.')
+        for field in ('audio_track','subtitle_track'):
+            if field in data and data[field] is not None and (isinstance(data[field],bool) or not isinstance(data[field],int) or not 0<=data[field]<=10000):
+                raise ValueError('Ongeldige taalkeuze.')
         native_vod = data.get('native_vod') is True and kind in ('movie', 'episode')
         initial_position = offset
         if native_vod:
@@ -197,7 +201,7 @@ class MobilePlayback:
             if native_vod:
                 output.mkdir(mode=0o700)
             metadata_filter = ("metadata=mode=print:key=lavf.concatdec.duration:enable='eq(n,0)',metadata=mode=print:key=lavf.concat.duration:enable='eq(n,0)'," if native_vod else '')
-            command = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-loglevel', 'info' if native_vod else 'error',
+            command = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-loglevel', 'info' if fast_start else 'error',
                        '-progress', 'pipe:1', '-stats_period', '0.5',
                        *(['-ss', str(offset)] if offset else []), '-re', '-threads', '2', *input_args,
                        '-map', '0:v:0?', '-map', '0:a:0?', '-sn', '-dn',
@@ -222,7 +226,9 @@ class MobilePlayback:
                            position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False,
                            requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown', decoded=False, native_vod=native_vod, duration_verified=False,
                            initial_position=initial_position, output=output, command=command, first_segment=offset,
-                           last_served=offset-1, seek_generation=0)
+                           last_served=offset-1, seek_generation=0, tracks={'audio':[], 'subtitles':[]},
+                           tracks_ready=False, subtitle_language=data.get('subtitle_language','nl'),
+                           track_choice={key:data[key] for key in ('audio_track','subtitle_track') if key in data})
             logging.getLogger('mijntv.stream').info('mobile_start kind=%s preparation_seconds=%.2f',
                                                    kind, session['transcoder_at']-requested_at)
             self._observe(session)
@@ -288,6 +294,7 @@ class MobilePlayback:
                     if not line:
                         break
                     text = line.decode('utf-8', errors='replace').lower()
+                    tracks.observe(session,text)
                     metadata = re.search(r'lavf\.concat(?:dec)?\.duration=([0-9]+)', text)
                     if session.get('native_vod') and metadata:
                         seconds = int(metadata[1])/1_000_000
@@ -331,11 +338,13 @@ class MobilePlayback:
         with self.streams.lock:
             s = self._session(token)
             s['seen'] = time.monotonic()
+            if s.get('tracks_ready') and not s.get('tracks_configured') and (not s['native_vod'] or s['duration_verified'] or (s['output']/'index.m3u8').exists()) and s['state'] not in ('stopped','preempted','error'):
+                tracks.configure(self,s,automatic=True,position=s['initial_position'])
             if self.seekable.enabled(s) and s['state'] not in ('stopped', 'preempted', 'error') and s['initial_position'] > 0 and not s.get('initial_seek_prepared'):
                 s['initial_seek_prepared'] = True
                 s['initial_position'] = min(s['initial_position'], max(0, s['duration']-.1))
                 self.seekable.restart(s, math.floor(s['initial_position']))
-            ready = (s['output'] / 'index.m3u8').exists()
+            ready = (s['output'] / ('index_0.m3u8' if s.get('subtitle_id') is not None else 'index.m3u8')).exists()
             if ready and s['native_vod'] and not s['duration_verified'] and s['duration'] and s['initial_position'] > 0 and not s.get('initial_seek_prepared') and s['state'] not in ('stopped', 'preempted', 'error'):
                 s.update(native_vod=False, initial_seek_prepared=True, position=math.floor(s['initial_position']))
                 self.seekable.restart(s, s['position'])
@@ -363,7 +372,7 @@ class MobilePlayback:
                 'phase': 'buffering' if ready else 'preparing' if s['decoded'] else 'connecting',
                 'retryable': self.failure_details(s['failure'])[1], 'failure': s['failure'],
                 'native_vod': self.seekable.enabled(s), 'initial_position':s['initial_position'],
-                'position':0 if self.seekable.enabled(s) else s['position']}
+                'position':0 if self.seekable.enabled(s) else s['position'], 'tracks':tracks.options(s)}
 
     def pause(self, token, paused):
         if not isinstance(paused, bool):
@@ -383,27 +392,52 @@ class MobilePlayback:
             s = self._session(token)
             self._cleanup(s)
 
+    def select_tracks(self, data):
+        position=data.get('position',0)
+        if isinstance(position,bool) or not isinstance(position,(int,float)) or not math.isfinite(position) or not 0<=position<=7*86400:
+            raise ValueError('Ongeldige afspeelpositie.')
+        with self.streams.lock:
+            session=self._session(data.get('token'))
+            if session['kind'] not in ('movie','episode') or session['state'] in ('stopped','preempted','error'):
+                raise ValueError('Taalkeuze is voor deze video niet beschikbaar.')
+            position=min(position,max(0,session['duration']-.1)) if session['duration'] else position
+            tracks.configure(self,session,data.get('audio'),data.get('subtitle'),position=position)
+            return self.status(session['token'])
+
     def asset(self, token, name):
-        if not re.fullmatch(r'index\.m3u8|segment[0-9]{6,12}\.ts', name):
+        if not re.fullmatch(r'(?:index|video|captions)\.m3u8|segment[0-9]{6,12}\.ts|caption[0-9]{6,12}\.vtt', name):
             raise ValueError('Ongeldig videobestand.')
+        caption=re.fullmatch(r'caption([0-9]{6,12})\.vtt',name)
         with self.streams.lock:
             s = self._session(token)
             if s['state'] in ('preempted', 'stopped', 'error'):
                 raise ValueError('De mobiele speler is gestopt.')
             s['seen'] = time.monotonic()
             native = self.seekable.enabled(s)
-            if native and name == 'index.m3u8':
-                return self.seekable.playlist(s)
+            subtitles=s.get('subtitle_id') is not None
+            if name=='index.m3u8' and subtitles:return tracks.master(s)
+            if (name in ('captions.m3u8','video.m3u8') or caption) and not subtitles:
+                raise ValueError('Deze ondertiteling is niet beschikbaar.')
+            if native and name.endswith('.m3u8'):
+                return self.seekable.playlist(s, captions=name=='captions.m3u8')
             if not native:
-                path = s['output']/name
-                if not path.is_file() or path.is_symlink():
+                filename=('index_0_vtt.m3u8' if name=='captions.m3u8' else 'index_0.m3u8' if subtitles and name.endswith('.m3u8') else
+                          'index_0'+str(int(caption[1]))+'.vtt' if caption else name)
+                path = s['output']/filename
+                if not path.is_file() or path.is_symlink() or (caption and not self.seekable.caption_ready(s,filename)):
                     raise ValueError('Videosegment wordt nog voorbereid.')
-                try:
-                    data = path.read_bytes()
-                except OSError:
-                    raise ValueError('Dit videosegment is verlopen. Ga terug naar live.') from None
+                try:data = path.read_bytes()
+                except OSError:raise ValueError('Dit videosegment is verlopen. Ga terug naar live.') from None
+                if name=='captions.m3u8':
+                    data=re.sub(rb'index_0([0-9]+)\.vtt',lambda m:('caption'+format(int(m[1]),'06d')+'.vtt').encode(),data)
+                if caption:return self.caption_data(data), 'text/vtt'
                 return data, 'application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'video/mp2t'
-        return self.seekable.segment(token, int(name[7:-3]))
+        return self.seekable.segment(token, int(caption[1]) if caption else int(name[7:-3]),caption=bool(caption))
+
+    @staticmethod
+    def caption_data(data):
+        # FFmpeg's MPEG-TS muxer adds 1.4 seconds to the source timestamps.
+        return data.replace(b'WEBVTT\n',b'WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:126000\n',1)
 
     def expire(self):
         with self.streams.lock:

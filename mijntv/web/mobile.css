@@ -67,3 +67,9 @@ dialog{max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-
 .vod-filter-grid select{font-size:16px;padding:12px 10px}.vod-advanced .small-muted{font-size:12px;margin:15px 0 0}
 #vod-variant-wrap{clear:both;margin-bottom:14px}#vod-variant{font-size:16px;max-width:100%}
 @media(max-width:350px){.vod-filter-grid{grid-template-columns:1fr}}
+
+.shared-settings{border-top:1px solid var(--line);margin-top:22px;padding-top:12px}.shared-settings h3{font-size:16px}.shared-settings>label{display:block;font-size:14px;line-height:1.6}.shared-settings input[type=checkbox]{width:18px;height:18px;vertical-align:middle;accent-color:var(--green)}
+.up-next{margin:14px 0;padding:15px;border:1px solid #ffffff35;border-radius:12px;background:#234b43}.up-next>strong{font-size:15px}.up-next p{font-size:13px;line-height:1.5}.up-next>div{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.up-next .primary-button{width:auto;margin:0}.up-next .text-button{color:#ccddbd;font-size:13px}
+.player-surface.expanded:has(.up-next:not([hidden])) .playback-controls,.player-surface.expanded:has(.up-next:not([hidden])) #timeline-wrap{display:none}.player-surface.expanded:has(.up-next:not([hidden])) .player-actions{position:static}
+
+.player-languages{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:12px}.player-languages summary{cursor:pointer;font-weight:600}.player-languages label{display:grid;gap:6px}.player-languages select{font:inherit;font-size:16px;max-width:100%;padding:10px}.player-languages .vod-discovery-filters{margin-top:14px}
