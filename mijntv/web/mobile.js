@@ -10,6 +10,7 @@ function playbackMutation(path, body) {
   return pending;
 }
 let homeContext={signature:'',live_channel:''}, homeResumeGeneration=0, heroPreviewKey='';
+let playerExpanded=false, nativePlayerFullscreen=false;
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
 function store(storage,key,value) {try{if(value===null)storage.removeItem(key);else storage.setItem(key,value);}catch(_){}}
@@ -349,6 +350,7 @@ function clearVideo() {
   video.pause(); video.removeAttribute('src'); video.load(); origin=null;preview=null;lastPause=null;attaching=false;
 }
 function setPlayerStage(phase, message='') {
+  $('player-surface').dataset.phase=phase;
   const stages=['connecting','preparing','buffering'];
   const current=stages.indexOf(phase);
   document.querySelectorAll('[data-player-step]').forEach((step,index)=>{
@@ -372,6 +374,7 @@ function handlePlayerState(state) {
 }
 async function openPlayer(data, automatic=false) {
   if(!automatic) retries=0;
+  video.controls=!['movie','episode'].includes(data.kind);
   if(['recording','movie','episode'].includes(data.kind)&&data.position===undefined)data={...data,position:resume(playbackKey(data))?.position||0};
   const generation=++playerGeneration, previous=player?.token || stored(sessionStorage,'iptv-mobile-session');
   request={...data}; restarting=false;clearVideo();player=null;
@@ -448,11 +451,40 @@ function restartPlayer(message) {
   setTimeout(()=>{if(generation===playerGeneration&&$('player').open)openPlayer({...request,position:resume},true);},600);
 }
 async function closePlayer() {
+  exitPlayerFullscreen();
   const token=player?.token || stored(sessionStorage,'iptv-mobile-session'); if(player&&!video.ended&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:position(),duration:player.duration}));saveVodProgress();} ++playerGeneration;clearVideo();player=null;request=null;
   if($('player').open)$('player').close();
   if(token)try{await playbackMutation('/api/mobile/stop',{token});if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}catch(_){}
   refreshHomeContinue();
 }
+function setPlayerExpanded(value) {
+  playerExpanded=value;
+  $('player').classList.toggle('player-expanded',value);
+  $('player-surface').classList.toggle('expanded',value);
+  $('fullscreen').textContent=value?'Kleiner scherm':'Volledig scherm';
+  $('fullscreen').setAttribute('aria-pressed',String(value));
+}
+function exitPlayerFullscreen() {
+  setPlayerExpanded(false);
+  if(document.fullscreenElement===$('player-surface')&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});
+}
+async function togglePlayerFullscreen() {
+  if(playerExpanded){exitPlayerFullscreen();return;}
+  setPlayerExpanded(true);
+  // Fullscreen the complete player, so server-side seek controls stay inside.
+  // iPhone browsers without element fullscreen retain the same viewport view.
+  if($('player-surface').requestFullscreen){
+    try{await $('player-surface').requestFullscreen();}catch(_){}
+  }
+}
+document.addEventListener('fullscreenchange',()=>{
+  const active=document.fullscreenElement===$('player-surface');
+  if(active&&(!playerExpanded||!$('player').open)){
+    if(document.exitFullscreen)document.exitFullscreen().catch(()=>{});return;
+  }
+  if(active)setPlayerExpanded(true);else if(nativePlayerFullscreen)setPlayerExpanded(false);
+  nativePlayerFullscreen=active;
+});
 function position() {
   if(!player)return 0;if(origin===null&&video.seekable.length)origin=video.seekable.start(0);
   return player.position+Math.max(0,video.currentTime-(origin??0));
@@ -499,10 +531,12 @@ $('recording-filters').onclick=e=>{const b=e.target.closest('[data-recording-fil
 $('guide-days').onclick=e=>{const b=e.target.closest('[data-day]');if(!b)return;guideDay=Number(b.dataset.day);document.querySelectorAll('[data-day]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b));});renderGuide();};
 $('guide-channel').onchange=loadGuide;$('guide-refresh').onclick=loadGuide;
 $('close-programme').onclick=()=>$('programme').close();$('about').onclick=()=>$('about-dialog').showModal();$('close-about').onclick=()=>$('about-dialog').close();
-$('close-player').onclick=closePlayer;$('player').oncancel=e=>{e.preventDefault();closePlayer();};$('retry-player').onclick=()=>request&&openPlayer(request);
+$('close-player').onclick=closePlayer;$('player').oncancel=e=>{e.preventDefault();if(playerExpanded)exitPlayerFullscreen();else closePlayer();};$('retry-player').onclick=()=>request&&openPlayer(request);
 $('pause').onclick=()=>{if(video.paused)video.play().catch(e=>toast('Tik op de afspeelknop in het beeld.'));else video.pause();};
 $('go-live').onclick=()=>{if(video.seekable.length)video.currentTime=Math.max(0,video.seekable.end(video.seekable.length-1)-.5);};
-$('fullscreen').onclick=()=>{if(video.webkitEnterFullscreen)video.webkitEnterFullscreen();else if(video.requestFullscreen)video.requestFullscreen().catch(()=>toast('Volledig scherm is nu niet beschikbaar.'));};
+$('fullscreen').onclick=togglePlayerFullscreen;
+$('mute').onclick=()=>{video.muted=!video.muted;};
+video.addEventListener('volumechange',()=>{$('mute').textContent=video.muted?'Geluid aan':'Geluid uit';$('mute').setAttribute('aria-pressed',String(video.muted));});
 $('timeline').oninput=()=>{preview=Number($('timeline').value);$('elapsed').textContent=time(preview);};
 $('timeline').onchange=()=>{const target=Number($('timeline').value);preview=null;seek(target);};
 for(const event of ['timeupdate','durationchange','loadedmetadata','seeked'])video.addEventListener(event,updateTimeline);
