@@ -363,7 +363,11 @@ function setPlayerStage(phase, message='') {
 function setLoading(message,phase='connecting') { $('player-loading').hidden=false; $('player-status').textContent=message; $('retry-player').hidden=true;setPlayerStage(phase,message); }
 function failPlayer(message) { for(const id of ['timeline','rewind','forward'])$(id).disabled=true;if($('player-title').textContent==='Verbinden…')$('player-title').textContent='Even niet beschikbaar';$('player-loading').hidden=true;$('player-message').textContent=message;$('retry-player').hidden=false;$('pause').disabled=true;setPlayerStage('error',message); }
 function stopFailedPlayer(message) {
-  const token=player?.token;clearVideo();failPlayer(message);
+  const token=player?.token,current=position();
+  if(player&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:current,duration:player.duration}));saveVodProgress();}
+  clearVideo();if(player)player.position=current;
+  if(request&&request.kind!=='live')request={...request,position:current};
+  failPlayer(message);
   if(token)playbackMutation('/api/mobile/stop',{token}).then(()=>{if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}).catch(()=>{});
 }
 function handlePlayerState(state) {
