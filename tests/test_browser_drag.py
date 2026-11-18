@@ -26,14 +26,16 @@ class BrowserDragTests(unittest.TestCase):
         threading.Thread(target=self.server.serve_forever,daemon=True).start()
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=True,args=['--no-sandbox'])
-        self.context = self.browser.new_context(viewport={'width':1440,'height':2000},has_touch=True,
-                                               http_credentials={'username':'admin','password':'browser-test-password'})
+        self.context = self.browser.new_context(viewport={'width':1440,'height':2000},has_touch=True)
         self.page = self.context.new_page()
         self.errors = []
         self.page.on('pageerror',lambda error: self.errors.append(str(error)))
         self.saves = []
         self.page.on('request',lambda request: self.saves.append(request) if request.url.endswith('/api/favorites/order') else None)
         self.page.goto(f'http://127.0.0.1:{self.server.server_port}/admin')
+        self.page.locator('#username').fill('admin')
+        self.page.locator('#password').fill('browser-test-password')
+        self.page.locator('#login-form button[type=submit]').click()
         self.page.locator('#panel-channels > summary').click()
         # These regression gestures span the whole list; keep all eight rows visible.
         self.page.locator('#favorites').evaluate("element => element.style.maxHeight = 'none'")
