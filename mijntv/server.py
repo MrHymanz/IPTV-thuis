@@ -63,6 +63,7 @@ class AdminServer(ThreadingHTTPServer):
         self.artwork = Artwork(store, self.vod, self.logos)
         self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
+        self.previews.mobile = self.mobile
         self.artwork_warmer = ArtworkWarmer(self.artwork)
         self.logos.start()
 
@@ -144,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     self.reply(404, {'error': 'Geen momentopname beschikbaar.'})
             elif parts.path == '/api/mobile/home':
-                self.reply(200, self.server.vod.home_context() | {'live_channel': self.server.previews.current_channel()})
+                self.reply(200, self.server.vod.home_context())
             elif parts.path == '/api/mobile/vod':
                 kind = params.get('kind', ['movie'])[0]
                 options = {key:params[key][0] for key in ('genre', 'year', 'min_rating', 'length') if key in params}

@@ -9,7 +9,7 @@ function playbackMutation(path, body) {
   playbackQueue = pending.catch(()=>{});
   return pending;
 }
-let homeContext={signature:'',live_channel:''}, homeResumeGeneration=0, heroPreviewKey='';
+let homeContext={signature:''}, homeResumeGeneration=0, heroPreviewKey='';
 let playerExpanded=false, nativePlayerFullscreen=false, nativeVideoFullscreen=false;
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
@@ -80,7 +80,10 @@ function renderRecordings() {
   $('home-recordings').replaceChildren(...(saved.length?saved.map(r=>recordingRow(r,true)):[element('p','empty','Nog niets opgenomen. In de gids vind je iets voor later.')]));
 }
 function renderHome() {
-  const featured=channels.find(c=>c.available&&c.id===homeContext.live_channel)||channels.find(c=>c.available&&c.epg?.now)||channels.find(c=>c.available);
+  const last=stored(localStorage,'iptv-last-live-'+homeContext.signature);
+  const available=channels.filter(c=>c.available);
+  const npo1=c=>/\bnpo\s*1(?!\d)/i.test(c.label);
+  const featured=available.find(c=>c.id===last)||available.find(c=>npo1(c)&&!/extra/i.test(c.label))||available.find(npo1)||available[0];
   $('home-channels').replaceChildren(...(channels.length?channels.slice(0,4).map(channelRow):[element('p','empty','Voeg eerst favorieten toe in het beheer van je mediacenter.')]));
   $('featured').disabled=!featured;
   updateHeroPreview(featured);
@@ -452,7 +455,7 @@ async function openPlayer(data, automatic=false) {
         if(handlePlayerState(state))return;
         player={...player,...state};
         setPlayerStage(state.phase||'connecting');$('player-status').textContent=$('player-stage-note').textContent;
-        if(state.ready){if(attachVideo(generation)!==false)heartbeat=setInterval(()=>checkPlayer(generation),10000);return;}
+        if(state.ready){if(player.kind==='live'){heroPreviewKey='';renderHome();}if(attachVideo(generation)!==false)heartbeat=setInterval(()=>checkPlayer(generation),10000);return;}
         if(Date.now()-started>30000){restartPlayer('Deze bron reageert niet.');return;}
         playerTimer=setTimeout(poll,1000);
       }catch(error){if(generation===playerGeneration)failPlayer(error.message);}
@@ -601,7 +604,7 @@ $('timeline').oninput=()=>{preview=Number($('timeline').value);$('elapsed').text
 $('timeline').onchange=()=>{const target=Number($('timeline').value);preview=null;seek(target);};
 for(const event of ['timeupdate','durationchange','loadedmetadata','seeked'])video.addEventListener(event,updateTimeline);
 video.addEventListener('ended',()=>{if(player&&['recording','movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),null);saveVodProgress(true);}});
-video.addEventListener('playing',()=>{$('player-loading').hidden=true;setPlayerStage('playing');updateTimeline();});
+video.addEventListener('playing',()=>{if(player?.kind==='live'){store(localStorage,'iptv-last-live-'+homeContext.signature,player.id||request.id);heroPreviewKey='';renderHome();}$('player-loading').hidden=true;setPlayerStage('playing');updateTimeline();});
 video.addEventListener('waiting',()=>{if(player&&video.readyState<3)setLoading('Even laden…','buffering');});
 video.addEventListener('error',()=>{if(player&&!attaching&&$('player').open)recoverPlayer('De videostream kon niet worden geladen.');});
 for(const event of ['pause','play'])video.addEventListener(event,()=>{
