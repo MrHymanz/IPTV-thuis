@@ -147,7 +147,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, self.server.vod.home_context() | {'live_channel': self.server.previews.current_channel()})
             elif parts.path == '/api/mobile/vod':
                 kind = params.get('kind', ['movie'])[0]
-                result = self.server.vod.catalog(kind, params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0], params.get('sort', ['title'])[0])
+                options = {key:params[key][0] for key in ('genre', 'year', 'min_rating', 'length') if key in params}
+                result = self.server.vod.catalog(kind, params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0], params.get('sort', ['title'])[0], **options)
                 if result.get('signature'):
                     self.server.artwork_warmer.request_page(result, kind)
                 self.reply(200, result)
@@ -164,7 +165,11 @@ class Handler(BaseHTTPRequestHandler):
             elif parts.path == '/api/artwork-settings':
                 self.reply(200, self.server.artwork.status())
             elif parts.path == '/api/mobile/vod/detail':
-                self.reply(200, self.server.vod.detail(params.get('kind', ['movie'])[0], params.get('id', [''])[0]))
+                kind, key = params.get('kind', ['movie'])[0], params.get('id', [''])[0]
+                detail = self.server.vod.detail(kind, key)
+                if detail.get('id'):
+                    detail['variants'] = self.server.vod.variants(kind, key, params.get('category', [''])[0])
+                self.reply(200, detail)
             elif parts.path == '/api/mobile/vod/cover':
                 kind, key = params.get('kind', ['movie'])[0], params.get('id', [''])[0]
                 asset = params.get('asset', ['poster'])[0]

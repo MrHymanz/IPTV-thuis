@@ -10,7 +10,7 @@ function playbackMutation(path, body) {
   return pending;
 }
 let homeContext={signature:'',live_channel:''}, homeResumeGeneration=0, heroPreviewKey='';
-let playerExpanded=false, nativePlayerFullscreen=false;
+let playerExpanded=false, nativePlayerFullscreen=false, nativeVideoFullscreen=false;
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
 function store(storage,key,value) {try{if(value===null)storage.removeItem(key);else storage.setItem(key,value);}catch(_){}}
@@ -194,9 +194,34 @@ function openProgramme(p) {
 }
 // Films and series use separate server catalogues and category IDs.
 let vodKind='movie', vodItems=[], vodTotal=0, vodSignature='', vodGeneration=0, vodDetailGeneration=0;
+let vodVariants=[];
 let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false, vodAllowed=null, vodPollTimer;
 let vodFeatured=[], featuredIndex=0, featuredKey='', featuredFrame, featuredDay='';
-const vodState={movie:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-movie')||'title'},series:{category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-series')||'title'}};
+function initialVodState(kind){let options={};try{options=JSON.parse(stored(localStorage,'iptv-vod-filters-'+kind)||'{}')||{};}catch(_){}return {category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-'+kind)||'title',genre:options.genre||'',year:options.year||'',min_rating:options.min_rating||'',length:options.length||''};}
+const vodState={movie:initialVodState('movie'),series:initialVodState('series')};
+function vodSearchText(value){return String(value||'').replace(/^\s*(?:NL|EN|UK|US|FR|DE|BE|ES|IT|PT|TR|AR)\s*[|:\-]\s*/i,'').replace(/\b(?:4K|8K|UHD|FHD|HD|SD|HDR10|HDR|HEVC|H\.?26[45]|X26[45]|2160P|1080[PI]|720P|480P)\b/gi,' ').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
+function hasVodFilters(){return ['genre','year','min_rating','length'].some(key=>vodState[vodKind][key]);}
+function renderVodFilterOptions(options={}){
+  const state=vodState[vodKind];
+  for(const [id,key,label,values] of [['vod-genre','genre','Alle genres',options.genres||[]],['vod-year','year','Alle jaren',options.years||[]]]){
+    const choices=[new Option(label,''),...values.map(value=>new Option(value,value))];
+    if(state[key]&&!values.includes(state[key]))choices.push(new Option(state[key],state[key]));
+    $(id).replaceChildren(...choices);$(id).value=state[key];
+  }
+  $('vod-rating').value=state.min_rating;$('vod-length').value=state.length;
+  const count=['genre','year','min_rating','length'].filter(key=>state[key]).length;
+  $('vod-filter-summary').textContent=count?'Filters · '+count+' actief':'Filters';
+}
+function matchesLocalVod(item){
+  const state=vodState[vodKind],words=vodSearchText(state.query).split(' ').filter(Boolean),text=vodSearchText(item.title+' '+(item.year||''));
+  if(!words.every(word=>text.includes(word)))return false;
+  if(state.year&&item.year!==state.year)return false;
+  if(state.genre&&!String(item.genre||'').split(/[,;/|]/).some(value=>vodSearchText(value)===vodSearchText(state.genre)))return false;
+  if(state.min_rating&&Number(String(item.rating||'0').replace(',','.'))<Number(state.min_rating))return false;
+  const duration=item.duration||0,short=vodKind==='series'?1800:5400,medium=vodKind==='series'?3600:7200;
+  if(state.length&&(!duration||(state.length==='short'&&duration>=short)||(state.length==='medium'&&(duration<short||duration>medium))||(state.length==='long'&&duration<=medium)))return false;
+  return true;
+}
 function vodLocal(name) {try {const value=JSON.parse(stored(localStorage,'iptv-vod-'+name+'-'+vodSignature)||'[]');return Array.isArray(value)?value:[];}catch(_){return [];}}
 function vodWrite(name,value) {store(localStorage,'iptv-vod-'+name+'-'+vodSignature,JSON.stringify(value.slice(0,300)));}
 function vodKey(item) {return item.kind+':'+item.id;}
@@ -209,20 +234,21 @@ function vodPoster(item, landscape=false) {
 function vodCard(item) {
   const row=action('',()=>openVodDetail(item),'vod-card');const poster=vodPoster(item);
   if(item.imdb_rank)poster.append(element('b','vod-badge','#'+item.imdb_rank+' IMDb'));else if(item.rating)poster.append(element('b','vod-badge','★ '+item.rating));
-  row.append(poster,element('strong','',item.title),element('span','small-muted',[item.year,item.kind==='series'?'Serie':'Film'].filter(Boolean).join(' · ')));
+  row.append(poster,element('strong','',item.display_title||item.title),element('span','small-muted',[item.year,item.kind==='series'?'Serie':'Film'].filter(Boolean).join(' · ')));
+  if(item.variants_count>1)row.append(element('span','small-muted',item.variants_count+' versies'));
   if(item.position>10){const track=element('span','vod-progress'),fill=element('span');fill.style.width=(item.duration>0?Math.min(100,item.position/item.duration*100):0)+'%';track.append(fill);row.append(track);}
   return row;
 }
 function renderVod() {
   const local=vodFilter==='saved'?vodLocal('saved'):vodLocal('history');
   const q=vodState[vodKind].query.toLocaleLowerCase('nl-NL').trim();
-  const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(vodAllowed===null||vodAllowed.includes(i.category))&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&i.title.toLocaleLowerCase('nl-NL').includes(q));
+  const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(vodAllowed===null||vodAllowed.includes(i.category))&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&matchesLocalVod(i));
   $('vod-list').replaceChildren(...shown.map(vodCard));
   if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':vodRequiresCategory?'Kies hierboven een bron of categorie. We halen het aanbod per categorie op.':vodState[vodKind].sort==='imdb250'?'Geen gekoppelde IMDb Top 250-films in deze selectie. Controleer de ranglijst in het beheer.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
   $('vod-count').textContent=vodFilter==='all'&&vodRequiresCategory?'':(vodFilter==='all'?vodTotal:shown.length)+' titels';
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
   $('vod-more').hidden=vodFilter!=='all'||vodItems.length>=vodTotal;
-  renderVodFeatured(!!q||!!vodState[vodKind].category||vodFilter!=='all');
+  renderVodFeatured(!!q||!!vodState[vodKind].category||vodFilter!=='all'||hasVodFilters());
   for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']]){const active=filter===vodFilter;$(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));}
 }
 function updateFeaturedIndex(index) {
@@ -261,9 +287,11 @@ async function loadVod(append=false,quiet=false) {
   vodLoading=true;$('vod-more').disabled=true;$('vod-retry').hidden=true;$('vod-notice').textContent='';
   if(!append&&!quiet){vodItems=[];$('vod-featured').hidden=true;$('vod-more').hidden=true;$('vod-count').textContent='';$('vod-list').replaceChildren(element('p','empty','Het aanbod van je provider wordt opgehaald…'));}
   const params=new URLSearchParams({kind,category:state.category,q:state.query,sort:state.sort,offset:String(append?vodItems.length:0)});
+  for(const key of ['genre','year','min_rating','length'])if(state[key])params.set(key,state[key]);
   try {
     const result=await api('/api/mobile/vod?'+params);if(generation!==vodGeneration)return;
     if(append&&vodSignature&&vodSignature!==result.signature){vodItems=[];vodTotal=0;throw Error('Je provideraccount is gewijzigd. Open het aanbod opnieuw.');}
+    renderVodFilterOptions(result.filter_options||{});$('vod-filter-notice').textContent=result.metadata_notice||'Genre en speelduur zijn niet bij iedere titel bekend.';
     featuredDay=result.featured_day||'';vodFeatured=result.featured||[];vodAllowed=result.allowed_categories??null;vodRequiresCategory=!!result.requires_category;vodSignature=result.signature;vodItems=append?[...new Map(vodItems.concat(result.items).map(i=>[i.id,i])).values()]:quiet&&vodItems.length>60?vodItems:result.items;vodTotal=result.total;
     const categories=[new Option(result.requires_category?'Kies een categorie':'Alle categorieën',''),...result.categories.map(c=>new Option(c.name,c.id))];
     if(state.category&&!result.categories.some(c=>c.id===state.category))categories.push(new Option('Eerdere categorie',state.category));
@@ -275,13 +303,16 @@ function enterVod(kind) {
   vodKind=kind;const series=kind==='series';$('vod-heading').textContent=window.pickMobileCopy(series?'seriesHead':'filmsHead');$('vod-subtitle').textContent=window.pickMobileCopy(series?'seriesSub':'filmsSub');
   $('vod-sort').replaceChildren(new Option('Alfabetisch A–Z','title'),new Option('Beste beoordeling (provider)','rating'),...(series?[]:[new Option('IMDb Top 250','imdb250')]));if(series&&vodState[kind].sort==='imdb250')vodState[kind].sort='title';$('vod-sort').value=vodState[kind].sort;
   $('vod-search').placeholder=series?'Zoek een serie':'Zoek een film';$('vod-search').setAttribute('aria-label',$('vod-search').placeholder);$('vod-search').value=vodState[kind].query;
+  $('vod-length-label').textContent=series?'Afleveringsduur':'Speelduur';
+  $('vod-length').replaceChildren(new Option('Alle lengtes',''),new Option(series?'Korter dan 30 minuten':'Korter dan 90 minuten','short'),new Option(series?'30–60 minuten':'90–120 minuten','medium'),new Option(series?'Langer dan 60 minuten':'Langer dan 120 minuten','long'));
+  renderVodFilterOptions();
   $('vod-category').replaceChildren(new Option('Alle categorieën',''));vodFilter='all';loadVod();
 }
 function saveVod(item) {
   const list=vodLocal('saved'),key=vodKey(item),found=list.some(x=>vodKey(x)===key);
   vodWrite('saved',found?list.filter(x=>vodKey(x)!==key):[item,...list]);toast(found?'Verwijderd uit je kijklijst.':'Toegevoegd aan je kijklijst.');renderVodActions();if(vodFilter==='saved')renderVod();
 }
-function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,cover:item.cover,year:item.year,rating:item.rating,category:item.category||''};}
+function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,cover:item.cover,year:item.year,rating:item.rating,category:item.category||'',display_title:item.display_title,genre:item.genre,duration:item.duration};}
 function playVod(item,episode=null,fromStart=false) {
   const kind=episode?'episode':'movie', id=episode?episode.id:item.id;
   const data={kind,id,signature:item.signature,library:vodLibrary(item),...(episode?{episode:{id:episode.id,title:episode.title,season:episode.season,number:episode.number}}:{})};
@@ -306,13 +337,16 @@ function renderVodEpisodes() {
   if(!episodes.length)$('vod-episodes').append(element('p','empty','Geen afleveringen beschikbaar voor dit seizoen.'));
 }
 async function openVodDetail(item) {
-  const generation=++vodDetailGeneration;vodSelected=null;$('vod-detail-title').textContent=item.title;$('vod-detail-kind').textContent=item.kind==='series'?'SERIE':'FILM';$('vod-detail-cover').replaceChildren(vodPoster(item));
+  const generation=++vodDetailGeneration;vodSelected=null;vodVariants=[];$('vod-variant-wrap').hidden=true;$('vod-detail-title').textContent=item.title;$('vod-detail-kind').textContent=item.kind==='series'?'SERIE':'FILM';$('vod-detail-cover').replaceChildren(vodPoster(item));
   for(const id of ['vod-detail-meta','vod-detail-cast','vod-detail-description'])$(id).textContent='';$('vod-detail-notice').textContent='Details ophalen…';$('vod-detail-actions').replaceChildren();$('vod-seasons').hidden=true;
   if(!$('vod-detail').open)$('vod-detail').showModal();
   try {
-    const detail=await api('/api/mobile/vod/detail?'+new URLSearchParams({kind:item.kind,id:item.id}));if(generation!==vodDetailGeneration||!$('vod-detail').open)return;
+    const detail=await api('/api/mobile/vod/detail?'+new URLSearchParams({kind:item.kind,id:item.id,category:vodState[item.kind]?.category||''}));if(generation!==vodDetailGeneration||!$('vod-detail').open)return;
     if(detail.signature!==vodSignature)throw Error('Het provideraccount is gewijzigd. Open het aanbod opnieuw.');
-    vodSelected={...detail,category:item.category||''};$('vod-detail-title').textContent=detail.title;$('vod-detail-cover').replaceChildren(vodPoster(detail));
+    vodSelected={...detail,display_title:item.display_title||detail.title,category:item.category||''};
+    vodVariants=detail.variants||[];$('vod-variant-wrap').hidden=vodVariants.length<2;
+    $('vod-variant').replaceChildren(...vodVariants.map(variant=>new Option([variant.title,variant.source_name].filter(Boolean).join(' · '),variant.id)));$('vod-variant').value=detail.id;
+    $('vod-detail-title').textContent=detail.title;$('vod-detail-cover').replaceChildren(vodPoster(detail));
     $('vod-detail-meta').textContent=[detail.year,detail.genre,detail.duration?Math.round(detail.duration/60)+' min':'',detail.rating?'★ '+detail.rating:''].filter(Boolean).join(' · ');
     $('vod-detail-description').textContent=detail.description||'Geen beschrijving beschikbaar.';$('vod-detail-cast').textContent=[detail.director?'Regie: '+detail.director:'',detail.cast?'Met: '+detail.cast:''].filter(Boolean).join('\n');$('vod-detail-notice').textContent=detail.notice||'';renderVodActions();
     if(detail.kind==='series'){
@@ -334,6 +368,13 @@ $('vod-search').oninput=()=>{vodState[vodKind].query=$('vod-search').value;clear
 $('vod-category').onchange=()=>{vodState[vodKind].category=$('vod-category').value;loadVod();};
 for(const [id,filter] of [['vod-all','all'],['vod-saved','saved'],['vod-continue','continue']])$(id).onclick=()=>{vodFilter=filter;if(!vodLoading&&vodSignature)renderVod();};
 $('vod-sort').onchange=()=>{vodState[vodKind].sort=$('vod-sort').value;store(localStorage,'iptv-vod-sort-'+vodKind,$('vod-sort').value);loadVod();};
+for(const [id,key] of [['vod-genre','genre'],['vod-year','year'],['vod-rating','min_rating'],['vod-length','length']])$(id).onchange=()=>{
+  vodState[vodKind][key]=$(id).value;
+  const state=vodState[vodKind];store(localStorage,'iptv-vod-filters-'+vodKind,JSON.stringify(Object.fromEntries(['genre','year','min_rating','length'].map(key=>[key,state[key]]))));
+  loadVod();
+};
+$('vod-filter-reset').onclick=()=>{for(const key of ['genre','year','min_rating','length'])vodState[vodKind][key]='';store(localStorage,'iptv-vod-filters-'+vodKind,null);renderVodFilterOptions();loadVod();};
+$('vod-variant').onchange=()=>{const item=vodVariants.find(item=>item.id===$('vod-variant').value);if(item)openVodDetail(item);};
 $('vod-more').onclick=()=>loadVod(true);$('vod-retry').onclick=()=>loadVod();$('vod-season').onchange=renderVodEpisodes;
 $('vod-close').onclick=()=>{++vodDetailGeneration;$('vod-detail').close();};$('vod-detail').addEventListener('cancel',()=>{++vodDetailGeneration;});
 
@@ -365,7 +406,7 @@ function failPlayer(message) { for(const id of ['timeline','rewind','forward'])$
 function stopFailedPlayer(message) {
   const token=player?.token,current=position();
   if(player&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:current,duration:player.duration}));saveVodProgress();}
-  clearVideo();if(player)player.position=current;
+  clearVideo();if(player){player.position=current;if(player.native_vod)player.initial_position=current;}
   if(request&&request.kind!=='live')request={...request,position:current};
   failPlayer(message);
   if(token)playbackMutation('/api/mobile/stop',{token}).then(()=>{if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}).catch(()=>{});
@@ -378,7 +419,8 @@ function handlePlayerState(state) {
 }
 async function openPlayer(data, automatic=false) {
   if(!automatic) retries=0;
-  video.controls=!['movie','episode'].includes(data.kind);
+  data={...data,native_vod:/Apple/.test(navigator.vendor)&&typeof video.webkitEnterFullscreen==='function'&&['movie','episode'].includes(data.kind)};
+  video.controls=!['movie','episode'].includes(data.kind);$('fullscreen').disabled=true;
   if(['recording','movie','episode'].includes(data.kind)&&data.position===undefined)data={...data,position:resume(playbackKey(data))?.position||0};
   const generation=++playerGeneration, previous=player?.token || stored(sessionStorage,'iptv-mobile-session');
   request={...data}; restarting=false;clearVideo();player=null;
@@ -437,6 +479,13 @@ async function recoverPlayer(message, generation=playerGeneration) {
 function attachVideo(generation) {
   if(!player||generation!==playerGeneration)return;
   for(const id of ['timeline','rewind','forward','pause'])$(id).disabled=false;attaching=true;setLoading('Video klaar. Even bufferen…','buffering');
+  $('fullscreen').disabled=!!player.native_vod;
+  video.controls=!!player.native_vod||!['movie','episode'].includes(player.kind);
+  if(player.native_vod)video.addEventListener('loadedmetadata',()=>{
+    if(generation!==playerGeneration||!player?.native_vod)return;
+    $('fullscreen').disabled=false;
+    if(player.initial_position>0)video.currentTime=Math.min(player.initial_position,player.duration-.1);
+  },{once:true});
   const nativeHls=video.canPlayType('application/vnd.apple.mpegurl');
   if(nativeHls&&/Apple/.test(navigator.vendor)){video.src=player.playlist;video.load();tryPlay();}
   else if(window.Hls?.isSupported()){
@@ -469,10 +518,14 @@ function setPlayerExpanded(value) {
   $('fullscreen').setAttribute('aria-pressed',String(value));
 }
 function exitPlayerFullscreen() {
+  if(nativeVideoFullscreen&&video.webkitExitFullscreen){try{video.webkitExitFullscreen();}catch(_){}}
+  nativeVideoFullscreen=false;
   setPlayerExpanded(false);
   if(document.fullscreenElement===$('player-surface')&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});
 }
 async function togglePlayerFullscreen() {
+  if(nativeVideoFullscreen||playerExpanded){exitPlayerFullscreen();return;}
+  if(player?.native_vod&&video.webkitEnterFullscreen){try{video.webkitEnterFullscreen();return;}catch(_){}}
   if(playerExpanded){exitPlayerFullscreen();return;}
   setPlayerExpanded(true);
   // Fullscreen the complete player, so server-side seek controls stay inside.
@@ -481,6 +534,8 @@ async function togglePlayerFullscreen() {
     try{await $('player-surface').requestFullscreen();}catch(_){}
   }
 }
+video.addEventListener('webkitbeginfullscreen',()=>{nativeVideoFullscreen=true;$('fullscreen').textContent='Kleiner scherm';$('fullscreen').setAttribute('aria-pressed','true');});
+video.addEventListener('webkitendfullscreen',()=>{nativeVideoFullscreen=false;setPlayerExpanded(false);});
 document.addEventListener('fullscreenchange',()=>{
   const active=document.fullscreenElement===$('player-surface');
   if(active&&(!playerExpanded||!$('player').open)){
@@ -490,7 +545,7 @@ document.addEventListener('fullscreenchange',()=>{
   nativePlayerFullscreen=active;
 });
 function position() {
-  if(!player)return 0;if(origin===null&&video.seekable.length)origin=video.seekable.start(0);
+  if(!player)return 0;if(player.native_vod)return video.readyState<1?player.initial_position||0:video.currentTime;if(origin===null&&video.seekable.length)origin=video.seekable.start(0);
   return player.position+Math.max(0,video.currentTime-(origin??0));
 }
 function updateTimeline() {
@@ -507,7 +562,8 @@ function updateTimeline() {
 }
 function seek(target) {
   if(!player||!Number.isFinite(target))return;
-  if(player.kind==='live'){if(video.seekable.length)video.currentTime=Math.max(video.seekable.start(0),Math.min(target,video.seekable.end(video.seekable.length-1)-.3));preview=null;updateTimeline();}
+  if(player.native_vod){video.currentTime=Math.max(0,Math.min(target,player.duration-.1));preview=null;updateTimeline();}
+  else if(player.kind==='live'){if(video.seekable.length)video.currentTime=Math.max(video.seekable.start(0),Math.min(target,video.seekable.end(video.seekable.length-1)-.3));preview=null;updateTimeline();}
   else openPlayer({...request,position:Math.max(0,Math.min(target,player.duration?player.duration-1:7*86400))});
 }
 function setupSeek(id,direction) {

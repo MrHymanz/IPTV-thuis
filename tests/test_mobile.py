@@ -103,6 +103,79 @@ class MobileTests(unittest.TestCase):
         (Path(session['directory'].name)/'index.m3u8').write_text('#EXTM3U')
         self.assertEqual(self.mobile.status(player['token'])['phase'], 'buffering')
 
+    def test_native_vod_manifest_has_complete_duration_and_no_provider_addresses(self):
+        signature = self.vod_fixture()
+        player = self.mobile.start({'kind':'movie', 'id':'77', 'signature':signature, 'native_vod':True})
+        session = self.mobile.sessions[player['token']]
+        session.update(duration=18.5, duration_verified=True)
+        playlist, mime = self.mobile.asset(player['token'], 'index.m3u8')
+        self.assertIn(b'#EXT-X-PLAYLIST-TYPE:VOD', playlist)
+        self.assertIn(b'#EXT-X-ENDLIST', playlist)
+        self.assertEqual(playlist.count(b'#EXTINF:'), 19)
+        self.assertIn(b'#EXTINF:0.500000,', playlist)
+        self.assertNotIn(b'provider', playlist)
+        self.assertNotIn(b'test-secret', playlist)
+        self.assertTrue(self.mobile.status(player['token'])['native_vod'])
+        with self.assertRaises(ValueError):
+            self.mobile.asset(player['token'], 'segment000019.ts')
+
+    def test_waiting_native_segment_does_not_block_tv_preemption(self):
+        signature = self.vod_fixture()
+        player = self.mobile.start({'kind':'movie','id':'77','signature':signature,'native_vod':True})
+        self.mobile.sessions[player['token']]['duration_verified'] = True
+        errors=[]
+        def fetch():
+            try:self.mobile.asset(player['token'],'segment000000.ts')
+            except ValueError as error:errors.append(str(error))
+        worker=threading.Thread(target=fetch)
+        worker.start();time.sleep(.15)
+        self.tv();worker.join(timeout=1)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(errors)
+        self.assertEqual(self.mobile.sessions[player['token']]['state'],'preempted')
+        self.assertEqual(self.process.call_count,1)
+
+    def test_native_duration_probe_does_not_resurrect_a_preempted_stream(self):
+        signature = self.vod_fixture()
+        player = self.mobile.start({'kind':'movie','id':'77','signature':signature,'position':120,'native_vod':True})
+        session = self.mobile.sessions[player['token']]
+        session['duration_verified'] = True
+        self.tv()
+        count = self.process.call_count
+        self.assertEqual(self.mobile.status(player['token'])['state'],'preempted')
+        self.assertEqual(self.process.call_count,count)
+
+    def test_unknown_native_duration_falls_back_without_losing_resume_position(self):
+        signature = self.vod_fixture()
+        player = self.mobile.start({'kind':'movie','id':'77','signature':signature,'position':120,'native_vod':True})
+        session = self.mobile.sessions[player['token']]
+        (session['output']/'index.m3u8').write_text('#EXTM3U')
+        state = self.mobile.status(player['token'])
+        self.assertFalse(state['native_vod'])
+        self.assertEqual(state['position'],120)
+        self.assertEqual(session['first_segment'],120)
+        self.assertEqual(self.process.call_count,2)
+
+    def test_native_vod_seek_kills_previous_process_and_keeps_one_account(self):
+        signature = self.vod_fixture()
+        player = self.mobile.start({'kind':'movie', 'id':'77', 'signature':signature, 'native_vod':True})
+        session = self.mobile.sessions[player['token']]
+        session['duration_verified'] = True
+        old_process, old_output = session['process'], session['output']
+        with self.hub.lock:
+            self.mobile.seekable.restart(session, 120)
+        self.assertIsNotNone(old_process.poll())
+        self.assertFalse(old_output.exists())
+        self.assertEqual(session['first_segment'], 120)
+        self.assertEqual(session['command'][session['command'].index('-output_ts_offset')+1], '120')
+        self.assertEqual(self.hub.mobile['owner'], player['token'])
+        self.assertNotIn('test-secret', ' '.join(session['command']))
+        self.tv()
+        count = self.process.call_count
+        with self.assertRaises(ValueError):
+            self.mobile.asset(player['token'], 'segment000240.ts')
+        self.assertEqual(self.process.call_count, count)
+
     def test_tv_uses_primary_phone_uses_backup_without_touching_tv(self):
         feed=self.tv()
         result=self.play()
@@ -363,6 +436,54 @@ class MobileHLSIntegration(unittest.TestCase):
                         mobile.stop(player['token'])
             finally:
                 mobile.close(); recordings.close(); hub.close(); http.shutdown(); http.server_close()
+
+    def test_native_vod_can_seek_forward_backward_and_resume_without_new_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=25',
+                            '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','18',
+                            '-c:v','libx264','-preset','ultrafast','-threads','1','-c:a','aac',
+                            '-movflags','+faststart',str(root/'video.mp4')],capture_output=True,check=True)
+            http = ThreadingHTTPServer(('127.0.0.1',0),partial(QuietFiles,directory=directory))
+            threading.Thread(target=http.serve_forever,daemon=True).start()
+            store = Store(root/'data'); hub = StreamHub(store); recordings = Recordings(store,hub)
+            vod = Mock()
+            # Deliberately wrong provider duration: the actual file must win.
+            vod.playback.return_value = {'url':'http://127.0.0.1:'+str(http.server_port)+'/video.mp4',
+                'configuration':('fixture',{},'signature'),'title':'Film','label':'Film','duration':8}
+            mobile = MobilePlayback(store,recordings,hub,vod)
+            try:
+                player = mobile.start({'kind':'movie','id':'7','signature':'signature','position':3,'native_vod':True})
+                deadline = time.monotonic()+15
+                while time.monotonic()<deadline:
+                    state = mobile.status(player['token'])
+                    if state['ready'] or state['state']=='error':break
+                    time.sleep(.1)
+                self.assertTrue(state['ready'],state)
+                self.assertTrue(state['native_vod'])
+                self.assertAlmostEqual(state['duration'],18,delta=.1)
+                self.assertEqual(state['initial_position'],3)
+                playlist,_ = mobile.asset(player['token'],'index.m3u8')
+                self.assertIn(b'#EXT-X-START:TIME-OFFSET=3',playlist)
+                self.assertIn(b'segment000017.ts',playlist)
+                starts=[]
+                for index in (3,12,1):
+                    data,_ = mobile.asset(player['token'],'segment'+format(index,'06d')+'.ts')
+                    path=root/'segment.ts';path.write_bytes(data)
+                    probe=subprocess.run(['ffprobe','-v','error','-select_streams','v:0',
+                        '-show_entries','stream=start_time,codec_name','-of','json',str(path)],capture_output=True,check=True)
+                    stream=json.loads(probe.stdout)['streams'][0]
+                    self.assertEqual(stream['codec_name'],'h264')
+                    starts.append(float(stream['start_time']))
+                self.assertAlmostEqual(starts[1]-starts[0],9,delta=.1)
+                self.assertAlmostEqual(starts[2]-starts[0],-2,delta=.1)
+                session=mobile.sessions[player['token']]
+                self.assertEqual(len(list(Path(session['directory'].name).glob('run-*'))),1)
+                self.assertEqual(hub.mobile['owner'],player['token'])
+                mobile.stop(player['token'])
+                self.assertIsNone(hub.mobile)
+            finally:
+                mobile.close();recordings.close();hub.close();http.shutdown();http.server_close()
 
     def test_real_hls_is_h264_aac_and_releases_on_tv_preemption(self):
         with tempfile.TemporaryDirectory() as directory:

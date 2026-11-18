@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .catchup import Catchup, ProviderRequestError
 from .imdb import IMDbChart, title_key
+from .discovery import Discovery
 
 REFRESH_SECONDS = 6 * 3600
 PAGE_SIZE = 60
@@ -86,6 +87,8 @@ class VOD:
                     signature TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL,
                     updated REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY(signature,kind,id));
             ''')
+
+        self.discovery = Discovery(store)
 
     def configuration(self):
         configuration = self.provider.configuration()
@@ -180,6 +183,11 @@ class VOD:
 
     def close(self):
         self.closed.set()
+        with self.jobs_lock:
+            workers = list(self.workers.values())
+        for worker in workers:
+            if worker is not threading.current_thread():
+                worker.join(timeout=2)
 
     def account_allowed(self, row):
         if row['kind'] == 'episode':
@@ -252,6 +260,7 @@ class VOD:
                     continue
                 data = {'id': key, 'kind': kind, 'title': title, 'category': str(item.get('category_id') or category),
                         'year': clean(item.get('year') or str(item.get('releaseDate') or item.get('release_date') or '')[:4], 10),
+                        'genre': clean(item.get('genre'), 300), 'duration': duration(item),
                         'rating': clean(item.get('rating'), 10), 'imdb_id': clean(item.get('imdb_id') or item.get('imdb'), 20), 'tmdb_id': clean(item.get('tmdb_id') or item.get('tmdb'), 20)}
                 rows[key] = (signature, kind, key, str(item.get('category_id') or category), title, title.casefold(),
                              cover(item.get('stream_icon') if kind == 'movie' else item.get('cover')),
@@ -262,9 +271,10 @@ class VOD:
                        for c in categories if isinstance(c, dict) and c.get('category_id') is not None]
             self.check(configuration)
             self.failed.pop((signature, scope), None)
-            with self.store.connect() as db:
-                for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details', 'vod_backdrops'):
+            with self.discovery.lock, self.store.connect() as db:
+                for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details', 'vod_backdrops', 'vod_discovery'):
                     db.execute('DELETE FROM '+table+' WHERE signature<>?', (signature,))
+                self.discovery.invalidate(db, signature, kind, rows.keys())
                 if category:
                     db.execute('DELETE FROM vod_items WHERE signature=? AND kind=? AND category=?', (signature, kind, category))
                 else:
@@ -317,7 +327,7 @@ class VOD:
                         return picks
         return picks
 
-    def catalog(self, kind, category='', query='', offset=0, sort='title'):
+    def catalog(self, kind, category='', query='', offset=0, sort='title', genre='', year='', min_rating='', length=''):
         self.kind(kind)
         if sort not in ('title', 'rating', 'imdb250') or (kind != 'movie' and sort == 'imdb250'):
             raise ValueError('Ongeldige sorteervolgorde.')
@@ -348,9 +358,6 @@ class VOD:
         if category:
             where += ' AND category=?'
             args.append(str(category))
-        if query.strip():
-            where += ' AND instr(search,?)>0'
-            args.append(query.strip().casefold()[:300])
         feature_where, feature_args = where, list(args)
         try:
             featured_day = datetime.now(ZoneInfo('Europe/Amsterdam')).date().isoformat()
@@ -361,19 +368,15 @@ class VOD:
             notice = ' '.join(filter(None, [notice, self.chart.notice]))
         with self.store.connect() as db:
             db.create_function('imdb_rank', 1, self.chart.ranker())
-            ordering = 'title COLLATE NOCASE,id'
-            if sort == 'rating':
-                ordering = "CAST(replace(COALESCE(json_extract(data,'$.rating'),''),',','.') AS REAL) DESC,"+ordering
-            elif sort == 'imdb250':
-                where += ' AND imdb_rank(data) IS NOT NULL'
-                ordering = 'imdb_rank(data),'+ordering
             categories = [dict(row) for row in db.execute('SELECT id,name FROM vod_categories WHERE signature=? AND kind=? ORDER BY name COLLATE NOCASE', (configuration[2], kind))
                           if selected is None or row['id'] in selected]
-            total = db.execute('SELECT count(*) FROM vod_items WHERE '+where, args).fetchone()[0]
-            rows = db.execute('SELECT * FROM vod_items WHERE '+where+' ORDER BY '+ordering+' LIMIT ? OFFSET ?', (*args, PAGE_SIZE, offset)).fetchall()
-            featured = self.daily_featured(db, kind, feature_where, feature_args, featured_day) if not category and not query.strip() and not requires_category else []
+            self.discovery.ensure(db, configuration[2], kind, where, args)
+            rows, total, filter_options = self.discovery.query(db, where, args, query, sort, offset, PAGE_SIZE,
+                                                              genre, year, min_rating, length, kind)
+            featured = self.daily_featured(db, kind, feature_where, feature_args, featured_day) if not category and not query.strip() and not requires_category and not any((genre, year, min_rating, length)) else []
         artwork_enabled = bool(self.store.setting('tmdb_key'))
-        items = [self.public(row, artwork_enabled) for row in rows]
+        items = [dict(self.public(row, artwork_enabled), display_title=row['display_title'], variants_count=row['variant_count'],
+                      year=row['discovery_year'], rating=str(row['group_rating'] or ''), duration=row['discovery_seconds']) for row in rows]
         if sort == 'imdb250':
             ranker = self.chart.ranker()
             for item, row in zip(items, rows):
@@ -381,7 +384,8 @@ class VOD:
         return {'items': items, 'categories': categories, 'featured': [self.public(row, artwork_enabled) for row in featured], 'featured_day': featured_day,
                 'total': total, 'offset': offset, 'limit': PAGE_SIZE, 'notice': notice,
                 'signature': configuration[2][:16], 'requires_category': requires_category,
-                'loading': loading, 'allowed_categories': selected}
+                'loading': loading, 'allowed_categories': selected, 'filter_options': filter_options,
+                'metadata_notice': 'Genre en speelduur zijn beschikbaar voor titels waarvan de aanbieder deze gegevens levert. Actieve filters verbergen titels zonder die gegevens.'}
 
     def daily_featured(self, db, kind, where, args, day):
         stamp = db.execute('SELECT max(updated) FROM vod_meta WHERE signature=? AND (kind=? OR kind LIKE ?)',
@@ -468,13 +472,14 @@ class VOD:
                     backdrops = backdrops if isinstance(backdrops, list) else [backdrops]
                     backdrop = next((cover(value) for value in backdrops if cover(value)), '')
                     data['has_backdrop'] = bool(backdrop)
-                    with self.store.connect() as db:
+                    with self.discovery.lock, self.store.connect() as db:
                         db.execute('INSERT OR REPLACE INTO vod_backdrops VALUES (?,?,?,?)', (configuration[2], kind, key, backdrop))
                         if kind == 'series':
                             db.execute("DELETE FROM vod_items WHERE signature=? AND kind='episode' AND category=?", (configuration[2], key))
                             db.executemany('INSERT OR REPLACE INTO vod_items VALUES (?,?,?,?,?,?,?,?,?)', episode_rows)
                         db.execute('UPDATE vod_items SET cover=?,extension=? WHERE signature=? AND kind=? AND id=?',
                                    (new_cover, extension(movie_data.get('container_extension') or row['extension']), configuration[2], kind, key))
+                        self.discovery.invalidate(db, configuration[2], kind, [key])
                         db.execute('INSERT OR REPLACE INTO vod_details VALUES (?,?,?,?,?)', (configuration[2], kind, key, time.time(), json.dumps(data)))
                 except ValueError:
                     if not cached:
@@ -487,10 +492,31 @@ class VOD:
             if data.get('imdb_id') or data.get('tmdb_id') or data.get('has_backdrop'):
                 base = json.loads(row['data'])
                 base.update({k:data[k] for k in ('imdb_id', 'tmdb_id', 'has_backdrop') if k in data})
-                with self.store.connect() as db:
+                with self.discovery.lock, self.store.connect() as db:
+                    self.discovery.invalidate(db, configuration[2], kind, [key])
                     db.execute('UPDATE vod_items SET data=? WHERE signature=? AND kind=? AND id=?', (json.dumps(base), configuration[2], kind, key))
             public = self.public(row, bool(self.store.setting('tmdb_key')))
             return dict(data, cover=public['cover'], backdrop=('/api/mobile/vod/cover?kind='+kind+'&id='+key+'&asset=backdrop') if data.get('has_backdrop') else public['backdrop'], notice=notice, signature=configuration[2][:16])
+
+    def variants(self, kind, key, category=''):
+        configuration = self.configuration()
+        self._item(configuration, self.kind(kind), identifier(key))
+        selected = self.selection(kind)
+        where, args = 'signature=? AND kind=?', [configuration[2], kind]
+        if selected is not None:
+            where += ' AND category IN ('+','.join('?' for _ in selected)+')' if selected else ' AND 0'
+            args.extend(selected)
+        if category:
+            where += ' AND category=?';args.append(category)
+        with self.store.connect() as db:
+            self.discovery.ensure(db, configuration[2], kind, where, args)
+            group = db.execute('SELECT group_key FROM vod_discovery WHERE signature=? AND kind=? AND id=?', (configuration[2], kind, key)).fetchone()
+            if not group:
+                return []
+            rows = db.execute('SELECT v.*,i.display_title,c.name AS source_name FROM (SELECT * FROM vod_items WHERE '+where+
+                ') v JOIN vod_discovery i USING(signature,kind,id) LEFT JOIN vod_categories c ON c.signature=v.signature AND c.kind=v.kind AND c.id=v.category '
+                'WHERE i.group_key=? ORDER BY i.preference,v.title COLLATE NOCASE,v.id', (*args, group[0])).fetchall()
+        return [dict(self.public(row, bool(self.store.setting('tmdb_key'))), source_name=row['source_name'] or '', display_title=row['display_title']) for row in rows]
 
     def home_context(self):
         try:

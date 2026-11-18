@@ -60,6 +60,17 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.store.setting('image_cache_gb'), '1')
         self.assertEqual(self.request('POST', '/api/mobile/resume', {'signature':'old','items':[]}, custom=False)[0], 403)
 
+    def test_discovery_filter_and_variant_routes_pass_validated_scope(self):
+        with patch.object(self.server.vod, 'catalog', return_value={'items':[], 'categories':[]}) as catalog:
+            self.assertEqual(self.request('GET', '/api/mobile/vod?kind=movie&genre=Drama&year=2001&min_rating=8&length=medium')[0], 200)
+            catalog.assert_called_once_with('movie', '', '', '0', 'title', genre='Drama', year='2001', min_rating='8', length='medium')
+        with patch.object(self.server.vod, 'detail', return_value={'id':'7','title':'Test'}) as detail, \
+                patch.object(self.server.vod, 'variants', return_value=[{'id':'7'},{'id':'8'}]) as variants:
+            status, body = self.request('GET', '/api/mobile/vod/detail?kind=movie&id=7&category=1')
+            self.assertEqual(status, 200)
+            self.assertEqual(len(json.loads(body)['variants']), 2)
+            variants.assert_called_once_with('movie', '7', '1')
+
     def test_admin_requires_auth_including_static_files(self):
         for path in ('/admin', '/admin.js', '/theme.js', '/theme.css', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/hls.min.js', '/api/mobile/status', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)

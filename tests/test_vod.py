@@ -18,6 +18,7 @@ class VODTests(unittest.TestCase):
         self.store.set_setting('source', SOURCE)
         self.provider = Catchup(self.store)
         self.vod = VOD(self.store, self.provider)
+        self.addCleanup(self.vod.close)
         self.movies = [{'stream_id': 7, 'name': 'Een film', 'category_id': '1',
                         'stream_icon': 'https://private-cover.test/secret+pass.jpg',
                         'container_extension': 'mkv', 'rating': '8.1',
@@ -97,6 +98,79 @@ class VODTests(unittest.TestCase):
         backgrounds = {task[2] for task in tasks if task[1]=='movie' and task[3]=='backdrop'}
         self.assertLessEqual(len(posters), 68)
         self.assertLessEqual(len(backgrounds), 8)
+
+    def test_smart_search_groups_quality_versions_but_keeps_remakes_separate(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='NL - Amélie 4K (2001)', year='2001'),
+                       dict(self.movies[0], stream_id=2, name='EN | Amelie HD (2001)', year='2001'),
+                       dict(self.movies[0], stream_id=3, name='Amelie (2020)', year='2020')]
+        result = self.catalog(query='amelie')
+        self.assertEqual(result['total'], 2)
+        self.assertEqual(self.catalog(query='NL - AMELIE 4K')['total'], 2)
+        self.assertEqual(self.catalog(query='amelie 2001')['total'], 1)
+        self.assertEqual(self.catalog(query='2001 amelie')['total'], 1)
+        versions = next(item for item in result['items'] if item['year']=='2001')
+        self.assertEqual(versions['variants_count'], 2)
+        self.assertEqual(versions['id'], '2')
+        self.assertEqual(versions['display_title'], 'Amelie')
+        variants = self.vod.variants('movie', versions['id'])
+        self.assertEqual({item['id'] for item in variants}, {'1', '2'})
+        self.assertNotIn('private-cover.test', json.dumps(variants))
+
+    def test_unknown_dates_do_not_merge_unrelated_same_name_titles(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='A film HD'),
+                       dict(self.movies[0], stream_id=2, name='A film 4K')]
+        self.assertEqual(self.catalog()['total'], 2)
+
+    def test_placeholder_identity_values_do_not_merge_unrelated_titles(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='First title', tmdb_id='0', imdb_id='0'),
+                       dict(self.movies[0], stream_id=2, name='Second title', tmdb_id='0', imdb_id='0')]
+        self.assertEqual(self.catalog()['total'], 2)
+
+    def test_combined_filters_and_grouped_pagination_use_only_known_metadata(self):
+        self.movies = [dict(self.movies[0], stream_id=i+1, name='Film '+str(i)+' (2001)', year='2001',
+                            genre='Drama, Thriller', duration_secs=6000, rating='8,2') for i in range(65)]
+        self.movies.append(dict(self.movies[0], stream_id=100, name='Other (2020)', year='2020', genre='Comedy', rating='5'))
+        result = self.catalog(genre='drama', year='2001', min_rating='8', length='medium')
+        self.assertEqual(result['total'], 65)
+        self.assertEqual(len(result['items']), 60)
+        page = self.catalog(genre='Drama', year='2001', min_rating='8', length='medium', offset=60)
+        self.assertEqual(len(page['items']), 5)
+        self.assertFalse({item['id'] for item in result['items']} & {item['id'] for item in page['items']})
+        self.assertIn('Comedy', result['filter_options']['genres'])
+        self.assertEqual(result['filter_options']['years'], ['2020', '2001'])
+        self.assertEqual(result['featured'], [])
+        self.assertEqual(self.catalog(length='short')['total'], 0)
+        self.assertEqual(self.catalog(min_rating='9')['total'], 0)
+
+    def test_filters_use_cached_details_without_new_provider_requests(self):
+        self.catalog()
+        self.movie_info['info'].update(genre='Drama', rating='8.8', releasedate='1990-01-01', duration_secs=7200)
+        self.vod.detail('movie', '7')
+        self.calls.clear()
+        result = self.catalog(genre='Drama', year='1990', length='medium', min_rating='8')
+        self.assertEqual(result['total'], 1)
+        self.assertEqual(self.calls, [])
+
+    def test_series_length_filter_uses_episode_length(self):
+        self.catalog('series');self.vod.detail('series', '7')
+        self.assertEqual(self.catalog('series', length='medium')['total'], 1)
+        self.assertEqual(self.catalog('series', length='short')['total'], 0)
+        self.assertEqual(self.catalog('series', length='long')['total'], 0)
+
+    def test_variant_sources_obey_explicit_and_admin_category_filters(self):
+        self.movies = [dict(self.movies[0], stream_id=1, name='A film HD (2000)', year='2000', category_id='1'),
+                       dict(self.movies[0], stream_id=2, name='A film 4K (2000)', year='2000', category_id='2')]
+        self.catalog()
+        self.assertEqual(len(self.vod.variants('movie', '1')), 2)
+        self.assertEqual(len(self.vod.variants('movie', '1', category='1')), 1)
+        self.store.set_setting('mobile_vod_selection:'+self.vod.configuration()[2],json.dumps({'movie':['1'],'series':[]}))
+        self.assertEqual(len(self.vod.variants('movie', '1')), 1)
+        self.assertEqual(self.catalog()['total'], 1)
+
+    def test_invalid_discovery_filters_are_rejected(self):
+        for kwargs in ({'year':'not-a-year'}, {'min_rating':'11'}, {'length':'unknown'}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.catalog(**kwargs)
 
     def test_same_category_and_title_ids_stay_separate_for_films_and_series(self):
         movies, series = self.catalog(), self.catalog('series')

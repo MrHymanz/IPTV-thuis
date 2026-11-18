@@ -15,6 +15,7 @@ import unicodedata
 
 from .streams import RecordingConflict
 from .vod import VOD
+from .seekable import SeekableVOD
 
 
 class MobilePlayback:
@@ -22,6 +23,7 @@ class MobilePlayback:
         self.store, self.recordings, self.streams = store, recordings, streams
         self.vod = vod or VOD(store, recordings.catchup)
         self.sessions = {}
+        self.seekable = SeekableVOD(self)
         self.current = None
         self.avoid = {}
         self.closed = threading.Event()
@@ -102,6 +104,10 @@ class MobilePlayback:
             raise ValueError('Ongeldig afspeeltype.')
         if offset > 7 * 86400 or (kind == 'live' and offset):
             raise ValueError('Ongeldige afspeelpositie.')
+        native_vod = data.get('native_vod') is True and kind in ('movie', 'episode')
+        initial_position = offset
+        if native_vod:
+            offset = 0  # Discover the exact source duration before seeking a resumed VOD.
         local_recording = None
         vod = self.vod.playback(kind, data.get('id'), data.get('signature')) if kind in ('movie', 'episode') else None
         if kind == 'recording':
@@ -179,27 +185,32 @@ class MobilePlayback:
                 manifest = root / 'input.ffconcat'
                 manifest.write_text("ffconcat version 1.0\nfile '" + address.replace("'", "'\\''") +
                                     "'\noption rw_timeout 15000000\n" +
-                                    (('duration ' + str(duration) + '\n') if duration else ''))
+                                    (('duration ' + str(duration) + '\n') if duration and not native_vod else ''))
                 manifest.chmod(0o600)
                 input_args = ['-f', 'concat', '-safe', '0', '-protocol_whitelist',
-                              'file,http,https,tcp,tls,crypto', '-i', str(manifest)]
+                              'file,http,https,tcp,tls,crypto', *(['-segment_time_metadata', '1'] if native_vod else []), '-i', str(manifest)]
             # One-second VOD segments reduce Safari's initial HLS buffer;
             # keep the same ninety-second seek window and bitrate limits.
             fast_start = kind in ('movie', 'episode')
             segment_seconds = 1 if fast_start else 2
-            command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
+            output = root/'run-0' if native_vod else root
+            if native_vod:
+                output.mkdir(mode=0o700)
+            metadata_filter = ("metadata=mode=print:key=lavf.concatdec.duration:enable='eq(n,0)',metadata=mode=print:key=lavf.concat.duration:enable='eq(n,0)'," if native_vod else '')
+            command = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-loglevel', 'info' if native_vod else 'error',
                        '-progress', 'pipe:1', '-stats_period', '0.5',
                        *(['-ss', str(offset)] if offset else []), '-re', '-threads', '2', *input_args,
                        '-map', '0:v:0?', '-map', '0:a:0?', '-sn', '-dn',
-                       '-vf', "scale=w='min(1280,iw)':h=-2,fps=25", '-c:v', 'libx264', '-preset', 'veryfast',
+                       '-vf', metadata_filter+"scale=w='min(1280,iw)':h=-2,fps=25", '-c:v', 'libx264', '-preset', 'veryfast',
                        *(['-tune', 'zerolatency'] if fast_start else []),
                        '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-threads', '2',
                        '-b:v', '1800k', '-maxrate', '2200k', '-bufsize', '4400k',
                        '-force_key_frames', 'expr:gte(t,n_forced*'+str(segment_seconds)+')',
                        '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+                       *(['-output_ts_offset', str(offset), '-start_number', str(offset)] if native_vod else []),
                        '-f', 'hls', '-hls_time', str(segment_seconds), '-hls_list_size', str(90//segment_seconds),
                        '-hls_delete_threshold', '2', '-hls_flags', 'delete_segments+independent_segments+temp_file',
-                       '-hls_segment_filename', str(root / 'segment%06d.ts'), str(root / 'index.m3u8')]
+                       '-hls_segment_filename', str(output / 'segment%06d.ts'), str(output / 'index.m3u8')]
             try:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                            stderr=subprocess.PIPE)
@@ -209,18 +220,27 @@ class MobilePlayback:
             session = dict(token=token, directory=directory, process=process, state='loading', message='',
                            kind=kind, id=identifier, title=title, channel=label, duration=duration,
                            position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False,
-                           requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown', decoded=False)
+                           requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown', decoded=False, native_vod=native_vod, duration_verified=False,
+                           initial_position=initial_position, output=output, command=command, first_segment=offset,
+                           last_served=offset-1, seek_generation=0)
             logging.getLogger('mijntv.stream').info('mobile_start kind=%s preparation_seconds=%.2f',
                                                    kind, session['transcoder_at']-requested_at)
-            threading.Thread(target=self._diagnose, args=(session,), daemon=True).start()
-            threading.Thread(target=self._progress, args=(session,), daemon=True).start()
+            self._observe(session)
             self.sessions[token] = session
             self.current = token
             if account:
                 def preempt():
                     self._stop(session, 'preempted', 'De tv of opname heeft dit account nodig. Mobiel probeert een ander account.')
+                session['preempt'] = preempt
                 self.streams.mobile = {'owner': token, 'key': account, 'stop': preempt}
             return self.status(token)
+
+    def _observe(self, session):
+        readers = [threading.Thread(target=target, args=(session,), daemon=True)
+                   for target in (self._diagnose, self._progress)]
+        session['readers'] = readers
+        for reader in readers:
+            reader.start()
 
     @staticmethod
     def _progress(session):
@@ -268,6 +288,11 @@ class MobilePlayback:
                     if not line:
                         break
                     text = line.decode('utf-8', errors='replace').lower()
+                    metadata = re.search(r'lavf\.concat(?:dec)?\.duration=([0-9]+)', text)
+                    if session.get('native_vod') and metadata:
+                        seconds = int(metadata[1])/1_000_000
+                        if 0 < seconds <= 7*86400:
+                            session.update(duration=seconds, duration_verified=True)
                     category = None
                     status = re.search(r'(?:http error|server returned|http/[0-9.]+)\s+([1-5][0-9]{2})\b', text)
                     code = status[1] if status else ''
@@ -306,7 +331,15 @@ class MobilePlayback:
         with self.streams.lock:
             s = self._session(token)
             s['seen'] = time.monotonic()
-            ready = (Path(s['directory'].name) / 'index.m3u8').exists()
+            if self.seekable.enabled(s) and s['state'] not in ('stopped', 'preempted', 'error') and s['initial_position'] > 0 and not s.get('initial_seek_prepared'):
+                s['initial_seek_prepared'] = True
+                s['initial_position'] = min(s['initial_position'], max(0, s['duration']-.1))
+                self.seekable.restart(s, math.floor(s['initial_position']))
+            ready = (s['output'] / 'index.m3u8').exists()
+            if ready and s['native_vod'] and not s['duration_verified'] and s['duration'] and s['initial_position'] > 0 and not s.get('initial_seek_prepared') and s['state'] not in ('stopped', 'preempted', 'error'):
+                s.update(native_vod=False, initial_seek_prepared=True, position=math.floor(s['initial_position']))
+                self.seekable.restart(s, s['position'])
+                ready = False
             if ready and not s['ready_logged']:
                 s['ready_logged'] = True
                 now = time.monotonic()
@@ -328,7 +361,9 @@ class MobilePlayback:
             return {k: s[k] for k in ('token', 'state', 'message', 'kind', 'id', 'title', 'channel', 'duration', 'position')} | {
                 'ready': ready, 'playlist': '/api/mobile/hls/' + token + '/index.m3u8',
                 'phase': 'buffering' if ready else 'preparing' if s['decoded'] else 'connecting',
-                'retryable': self.failure_details(s['failure'])[1], 'failure': s['failure']}
+                'retryable': self.failure_details(s['failure'])[1], 'failure': s['failure'],
+                'native_vod': self.seekable.enabled(s), 'initial_position':s['initial_position'],
+                'position':0 if self.seekable.enabled(s) else s['position']}
 
     def pause(self, token, paused):
         if not isinstance(paused, bool):
@@ -356,14 +391,19 @@ class MobilePlayback:
             if s['state'] in ('preempted', 'stopped', 'error'):
                 raise ValueError('De mobiele speler is gestopt.')
             s['seen'] = time.monotonic()
-            path = Path(s['directory'].name) / name
-            if not path.is_file() or path.is_symlink():
-                raise ValueError('Videosegment wordt nog voorbereid.')
-            try:
-                data = path.read_bytes()
-            except OSError:
-                raise ValueError('Dit videosegment is verlopen. Ga terug naar live.') from None
-            return data, 'application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'video/mp2t'
+            native = self.seekable.enabled(s)
+            if native and name == 'index.m3u8':
+                return self.seekable.playlist(s)
+            if not native:
+                path = s['output']/name
+                if not path.is_file() or path.is_symlink():
+                    raise ValueError('Videosegment wordt nog voorbereid.')
+                try:
+                    data = path.read_bytes()
+                except OSError:
+                    raise ValueError('Dit videosegment is verlopen. Ga terug naar live.') from None
+                return data, 'application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'video/mp2t'
+        return self.seekable.segment(token, int(name[7:-3]))
 
     def expire(self):
         with self.streams.lock:
