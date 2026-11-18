@@ -80,7 +80,28 @@ class MobileTests(unittest.TestCase):
             b'Invalid data found when processing input https://provider.test/movie/user/password/403.mp4\n')),
                    'failure': 'unknown'}
         self.mobile._diagnose(session)
-        self.assertEqual(session['failure'], 'unknown')
+        self.assertEqual(session['failure'], 'invalid_source')
+
+    def test_permanent_provider_error_has_actionable_message_and_no_retry(self):
+        player = self.play()
+        session = self.mobile.sessions[player['token']]
+        session['failure'] = 'title_unavailable'
+        session['process'].code = 1
+        state = self.mobile.status(player['token'])
+        self.assertEqual(state['state'], 'error')
+        self.assertFalse(state['retryable'])
+        self.assertIn('andere film', state['message'])
+        self.assertIsNone(self.hub.mobile)
+
+    def test_loading_phases_follow_actual_decoder_progress_and_playlist(self):
+        player = self.play()
+        session = self.mobile.sessions[player['token']]
+        self.assertEqual(self.mobile.status(player['token'])['phase'], 'connecting')
+        session['process'].stdout = io.BytesIO(b'frame=1\nprogress=continue\n')
+        self.mobile._progress(session)
+        self.assertEqual(self.mobile.status(player['token'])['phase'], 'preparing')
+        (Path(session['directory'].name)/'index.m3u8').write_text('#EXTM3U')
+        self.assertEqual(self.mobile.status(player['token'])['phase'], 'buffering')
 
     def test_tv_uses_primary_phone_uses_backup_without_touching_tv(self):
         feed=self.tv()

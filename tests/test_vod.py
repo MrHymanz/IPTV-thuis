@@ -61,6 +61,43 @@ class VODTests(unittest.TestCase):
         self.assertEqual([task[4] for task in tasks[:4]], [0, 0, 0, 0])
         self.assertEqual({task[3] for task in tasks}, {'poster', 'backdrop'})
 
+    def test_home_resume_validates_profile_visibility_and_uses_canonical_titles(self):
+        self.catalog()
+        signature = self.vod.configuration()[2][:16]
+        data = {'signature':signature, 'items':[{'kind':'movie', 'id':'7', 'title':'Untrusted', 'position':120, 'duration':3600}]}
+        self.calls.clear()
+        result = self.vod.resume_items(data)
+        self.assertEqual(result[0]['title'], 'Een film')
+        self.assertEqual(result[0]['position'], 120)
+        self.assertNotIn('private-cover.test', json.dumps(result))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.vod.resume_items(dict(data, signature='old-profile')), [])
+        self.store.set_setting('mobile_vod_selection:'+self.vod.configuration()[2], json.dumps({'movie':[], 'series':[]}))
+        self.assertEqual(self.vod.resume_items(data), [])
+
+    def test_home_resume_rejects_completed_movies_and_wrong_series_episode(self):
+        self.catalog(); self.catalog('series'); self.vod.detail('series', '7')
+        signature = self.vod.configuration()[2][:16]
+        self.assertEqual(self.vod.resume_items({'signature':signature, 'items':[
+            {'kind':'movie', 'id':'7', 'position':3599, 'duration':3600}]}), [])
+        result = self.vod.resume_items({'signature':signature, 'items':[
+            {'kind':'series', 'id':'7', 'position':120, 'episode':{'id':'100'}}]})
+        self.assertEqual(result[0]['episode']['title'], 'Begin')
+        with self.store.connect() as db:
+            db.execute("UPDATE vod_items SET category='8' WHERE kind='episode' AND id='100'")
+        self.assertEqual(self.vod.resume_items({'signature':signature, 'items':[
+            {'kind':'series', 'id':'7', 'position':120, 'episode':{'id':'100'}}]}), [])
+
+    def test_warming_is_limited_to_featured_and_first_page_posters(self):
+        self.movies = [dict(self.movies[0], stream_id=i+1, name='Film '+str(i)) for i in range(200)]
+        self.catalog()
+        with patch.object(self.vod, 'start_sync'):
+            tasks = list(self.vod.artwork_candidates())
+        posters = {task[2] for task in tasks if task[1]=='movie' and task[3]=='poster'}
+        backgrounds = {task[2] for task in tasks if task[1]=='movie' and task[3]=='backdrop'}
+        self.assertLessEqual(len(posters), 68)
+        self.assertLessEqual(len(backgrounds), 8)
+
     def test_same_category_and_title_ids_stay_separate_for_films_and_series(self):
         movies, series = self.catalog(), self.catalog('series')
         self.assertEqual(movies['categories'], [{'id': '1', 'name': 'HBO Films'}])

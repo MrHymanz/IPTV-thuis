@@ -63,6 +63,7 @@ class VOD:
         self.closed = threading.Event()
         self.jobs_lock = threading.Lock()
         self.workers, self.sync_errors, self.sync_retry = {}, {}, {}
+        self.detail_locks = {}
         self.featured_lock, self.featured_cache = threading.Lock(), {}
         with store.connect() as db:
             db.executescript('''
@@ -411,7 +412,9 @@ class VOD:
         self.kind(kind)
         key = identifier(key)
         configuration = self.configuration()
-        with self.lock:
+        with self.jobs_lock:
+            lock = self.detail_locks.setdefault((configuration[2], kind, key), threading.RLock())
+        with lock:
             row = self._item(configuration, kind, key)
             with self.store.connect() as db:
                 cached = db.execute('SELECT updated,data FROM vod_details WHERE signature=? AND kind=? AND id=?', (configuration[2], kind, key)).fetchone()
@@ -489,6 +492,54 @@ class VOD:
             public = self.public(row, bool(self.store.setting('tmdb_key')))
             return dict(data, cover=public['cover'], backdrop=('/api/mobile/vod/cover?kind='+kind+'&id='+key+'&asset=backdrop') if data.get('has_backdrop') else public['backdrop'], notice=notice, signature=configuration[2][:16])
 
+    def home_context(self):
+        try:
+            return {'signature': self.configuration()[2][:16]}
+        except ValueError:
+            return {'signature': ''}
+
+    def resume_items(self, data):
+        configuration = self.configuration()
+        if data.get('signature') != configuration[2][:16]:
+            return []
+        entries = data.get('items', [])
+        if not isinstance(entries, list) or len(entries) > 12:
+            raise ValueError('Ongeldige kijkgeschiedenis.')
+        result, seen = [], set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                kind, key = self.kind(entry.get('kind')), identifier(entry.get('id'))
+                if (kind, key) in seen:
+                    continue
+                row = self._item(configuration, kind, key)
+                position = entry.get('position')
+                if isinstance(position, bool) or not isinstance(position, (float, int)) or not 10 < position < 7*86400:
+                    continue
+                item = self.public(row, bool(self.store.setting('tmdb_key')))
+                item.update(signature=configuration[2][:16], position=position)
+                raw = json.loads(row['data'])
+                if kind == 'series':
+                    episode = entry.get('episode')
+                    if not isinstance(episode, dict):
+                        continue
+                    ep = self._item(configuration, 'episode', identifier(episode.get('id')))
+                    if ep['category'] != key:
+                        continue
+                    raw = json.loads(ep['data'])
+                    item['episode'] = {k:raw[k] for k in ('id', 'title', 'season', 'number')}
+                seconds = raw.get('duration') or entry.get('duration') or 0
+                item['duration'] = seconds if isinstance(seconds, (int, float)) and 0 < seconds <= 7*86400 else 0
+                if item['duration'] and position >= item['duration']-5:
+                    continue
+                result.append(item)
+                seen.add((kind, key))
+            except (ValueError, KeyError, TypeError):
+                continue
+        self.check(configuration)
+        return result
+
     def artwork_candidates(self):
         """Read cached, permitted titles without fetching a giant full catalogue."""
         configuration = self.configuration()
@@ -506,7 +557,7 @@ class VOD:
                 args.extend(selected)
             with self.store.connect() as db:
                 featured = self.daily_featured(db, kind, where, args, day)
-                rows = db.execute('SELECT id FROM vod_items WHERE '+where+' ORDER BY title COLLATE NOCASE,id', args).fetchall()
+                rows = db.execute('SELECT id FROM vod_items WHERE '+where+' ORDER BY title COLLATE NOCASE,id LIMIT 60', args).fetchall()
             groups.append((kind, featured, rows))
         # Enqueue both kinds' featured images before the potentially large tail.
         for kind, featured, _ in groups:
@@ -514,9 +565,8 @@ class VOD:
                 for asset in ('backdrop', 'poster'):
                     yield configuration[2], kind, row['id'], asset, 0
         for kind, _, rows in groups:
-            for index, row in enumerate(rows):
-                for asset in ('poster', 'backdrop'):
-                    yield configuration[2], kind, row['id'], asset, 1 if index < 60 else 5
+            for row in rows:
+                yield configuration[2], kind, row['id'], 'poster', 1
 
     def cover_url(self, kind, key):
         if kind not in ('movie', 'series', 'episode'):

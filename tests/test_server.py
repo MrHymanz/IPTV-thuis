@@ -49,6 +49,17 @@ class ServerTests(unittest.TestCase):
         connection.close()
         return status, result
 
+    def test_home_previews_cache_and_resume_routes_require_auth_and_csrf(self):
+        for path in ('/api/mobile/home', '/api/mobile/live-preview?id=one', '/api/image-cache'):
+            self.assertEqual(self.request('GET', path, auth=False)[0], 401)
+        self.assertEqual(self.request('GET', '/api/mobile/home')[0], 200)
+        self.assertEqual(self.request('GET', '/api/mobile/live-preview?id=one')[0], 404)
+        self.assertEqual(self.request('POST', '/api/image-cache', {'limit_gb':1}, custom=False)[0], 403)
+        self.assertEqual(self.request('POST', '/api/image-cache', {'limit_gb':1})[0], 200)
+        self.assertEqual(json.loads(self.request('GET', '/api/image-cache')[1])['limit_gb'], 1)
+        self.assertEqual(self.store.setting('image_cache_gb'), '1')
+        self.assertEqual(self.request('POST', '/api/mobile/resume', {'signature':'old','items':[]}, custom=False)[0], 403)
+
     def test_admin_requires_auth_including_static_files(self):
         for path in ('/admin', '/admin.js', '/theme.js', '/theme.css', '/api/favorites', '/api/status', '/api/backup-account', '/tv', '/tv.js', '/tv.css', '/mobile', '/mobile.js', '/mobile.css', '/hls.min.js', '/api/mobile/status', '/catchup', '/catchup.js', '/catchup-data.js', '/catchup.css'):
             self.assertEqual(self.request('GET', path, auth=False)[0], 401)

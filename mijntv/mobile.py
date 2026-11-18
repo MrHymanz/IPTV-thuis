@@ -188,6 +188,7 @@ class MobilePlayback:
             fast_start = kind in ('movie', 'episode')
             segment_seconds = 1 if fast_start else 2
             command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
+                       '-progress', 'pipe:1', '-stats_period', '0.5',
                        *(['-ss', str(offset)] if offset else []), '-re', '-threads', '2', *input_args,
                        '-map', '0:v:0?', '-map', '0:a:0?', '-sn', '-dn',
                        '-vf', "scale=w='min(1280,iw)':h=-2,fps=25", '-c:v', 'libx264', '-preset', 'veryfast',
@@ -200,7 +201,7 @@ class MobilePlayback:
                        '-hls_delete_threshold', '2', '-hls_flags', 'delete_segments+independent_segments+temp_file',
                        '-hls_segment_filename', str(root / 'segment%06d.ts'), str(root / 'index.m3u8')]
             try:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                            stderr=subprocess.PIPE)
             except OSError:
                 directory.cleanup()
@@ -208,10 +209,11 @@ class MobilePlayback:
             session = dict(token=token, directory=directory, process=process, state='loading', message='',
                            kind=kind, id=identifier, title=title, channel=label, duration=duration,
                            position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False,
-                           requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown')
+                           requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown', decoded=False)
             logging.getLogger('mijntv.stream').info('mobile_start kind=%s preparation_seconds=%.2f',
                                                    kind, session['transcoder_at']-requested_at)
             threading.Thread(target=self._diagnose, args=(session,), daemon=True).start()
+            threading.Thread(target=self._progress, args=(session,), daemon=True).start()
             self.sessions[token] = session
             self.current = token
             if account:
@@ -219,6 +221,39 @@ class MobilePlayback:
                     self._stop(session, 'preempted', 'De tv of opname heeft dit account nodig. Mobiel probeert een ander account.')
                 self.streams.mobile = {'owner': token, 'key': account, 'stop': preempt}
             return self.status(token)
+
+    @staticmethod
+    def _progress(session):
+        stream = getattr(session['process'], 'stdout', None)
+        if stream is None:
+            return
+        try:
+            with stream:
+                while True:
+                    line = stream.readline(256)
+                    if not line:
+                        break
+                    if line.startswith(b'frame='):
+                        try:
+                            session['decoded'] = int(line.split(b'=', 1)[1]) > 0
+                        except ValueError:
+                            pass
+        except OSError:
+            pass
+
+    @staticmethod
+    def failure_details(category):
+        messages = {
+            'provider_denied': 'De aanbieder weigert deze stream. Controleer je kijkaccount in het beheer of probeer later opnieuw.',
+            'title_unavailable': 'Deze titel is niet beschikbaar bij de aanbieder. Kies een andere film of aflevering.',
+            'provider_error': 'De aanbieder heeft een storing bij deze stream. Probeer het later opnieuw.',
+            'source_timeout': 'De aanbieder reageert te langzaam. Probeer het later opnieuw.',
+            'source_connection': 'De verbinding met de aanbieder is onderbroken.',
+            'unsupported_codec': 'Het videoformaat van deze titel wordt nog niet ondersteund.',
+            'conversion_error': 'Deze video kon niet worden omgezet voor je telefoon.',
+            'invalid_source': 'De aanbieder levert voor deze titel geen leesbare video. Kies een andere titel.'}
+        return messages.get(category, 'Deze bron kon niet worden afgespeeld. Probeer opnieuw of kies een andere titel.'), category not in {
+            'provider_denied', 'title_unavailable', 'unsupported_codec', 'conversion_error', 'invalid_source'}
 
     @staticmethod
     def _diagnose(session):
@@ -246,6 +281,8 @@ class MobilePlayback:
                         category = 'source_timeout'
                     elif any(value in text for value in ('connection refused', 'connection reset', 'network is unreachable', 'failed to resolve')):
                         category = 'source_connection'
+                    elif 'invalid data found when processing input' in text:
+                        category = 'invalid_source'
                     elif any(value in text for value in ('unknown decoder', 'decoder not found', 'unsupported codec')):
                         category = 'unsupported_codec'
                     elif any(value in text for value in ('error initializing output', 'error while opening encoder', 'failed to configure output pad')):
@@ -285,11 +322,13 @@ class MobilePlayback:
                         logging.getLogger('mijntv.stream').info(
                             'mobile_failed kind=%s category=%s exit_code=%s stream_seconds=%.2f',
                             s['kind'], s['failure'], code, time.monotonic()-s['transcoder_at'])
-                        self._stop(s, 'error', 'Deze bron kon niet worden afgespeeld. Probeer een andere zender of opnieuw.')
+                        self._stop(s, 'error', self.failure_details(s['failure'])[0])
                 elif ready:
                     s['state'] = 'paused' if s['paused'] else 'playing'
             return {k: s[k] for k in ('token', 'state', 'message', 'kind', 'id', 'title', 'channel', 'duration', 'position')} | {
-                'ready': ready, 'playlist': '/api/mobile/hls/' + token + '/index.m3u8'}
+                'ready': ready, 'playlist': '/api/mobile/hls/' + token + '/index.m3u8',
+                'phase': 'buffering' if ready else 'preparing' if s['decoded'] else 'connecting',
+                'retryable': self.failure_details(s['failure'])[1], 'failure': s['failure']}
 
     def pause(self, token, paused):
         if not isinstance(paused, bool):

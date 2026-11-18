@@ -221,4 +221,4 @@ class ArtworkWarmingTests(unittest.TestCase):
             warmer = ArtworkWarmer(self.art)
         self.addCleanup(warmer.close)
         warmer.fill()
-        self.assertEqual(warmer.tasks.qsize(), 4096)
+        self.assertEqual(warmer.tasks.qsize(), 256)

@@ -310,3 +310,7 @@ $('tmdb-form').onsubmit=async event=>{event.preventDefault();const key=$('tmdb-k
 $('tmdb-test').onclick=async()=>{try{$('tmdb-status').textContent='Verbinding testen…';await api('/api/artwork-settings/test',{});$('tmdb-status').textContent='TMDB is bereikbaar en de sleutel werkt.';}catch(error){$('tmdb-status').textContent=error.message;}};
 $('tmdb-disable').onclick=async()=>{try{await api('/api/artwork-settings',{key:''});await tmdbStatus();}catch(error){$('tmdb-status').textContent=error.message;}};
 tmdbStatus();
+
+async function imageCacheStatus(){try{const result=await api('/api/image-cache');$('image-cache-limit').value=result.limit_gb;$('image-cache-status').textContent=result.indexing?'Cachegebruik wordt berekend…':(result.bytes/1e9).toFixed(2)+' GB gebruikt van '+result.limit_gb+' GB · '+result.files+' afbeeldingen.';}catch(error){$('image-cache-status').textContent=error.message;}}
+$('image-cache-panel').addEventListener('toggle',()=>{if($('image-cache-panel').open)imageCacheStatus();});
+$('image-cache-form').onsubmit=async event=>{event.preventDefault();try{await api('/api/image-cache',{limit_gb:Number($('image-cache-limit').value)});await imageCacheStatus();$('image-cache-status').textContent+=' Opgeslagen. Opruimen gebeurt op de achtergrond.';}catch(error){$('image-cache-status').textContent=error.message;}};

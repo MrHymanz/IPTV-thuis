@@ -21,6 +21,7 @@ from .mobile import MobilePlayback
 from .vod import VOD
 from .thumbnails import RecordingThumbnails
 from .artwork import Artwork, ArtworkWarmer
+from .previews import LivePreviews
 
 
 def hash_password(password, salt):
@@ -51,19 +52,25 @@ class AdminServer(ThreadingHTTPServer):
     def __init__(self, address, store, auth, web_directory):
         self.store, self.auth, self.web_directory = store, auth, Path(web_directory)
         self.browser_auth = BrowserSessions('iptv_session')
-        self.logos = LogoCache(Path(store.path).parent)
+        self.logos = LogoCache(Path(store.path).parent, store)
         self.epg = EPG(store)
         self.display = Display(store)
         super().__init__(address, Handler)
         self.streams = StreamHub(store)
+        self.previews = LivePreviews(store, self.streams)
         self.recordings = Recordings(store,self.streams)
         self.vod = VOD(store, self.recordings.catchup)
         self.artwork = Artwork(store, self.vod, self.logos)
         self.thumbnails = RecordingThumbnails(self.recordings, Path(store.path).parent)
         self.mobile = MobilePlayback(store, self.recordings, self.streams, self.vod)
         self.artwork_warmer = ArtworkWarmer(self.artwork)
+        self.logos.start()
 
     def server_close(self):
+        if hasattr(self, 'previews'):
+            self.previews.close()
+        if hasattr(self, 'logos'):
+            self.logos.close()
         if hasattr(self, 'artwork_warmer'):
             self.artwork_warmer.close()
         if hasattr(self, 'thumbnails'):
@@ -131,9 +138,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts.path == '/api/mobile/status':
                 self.reply(200, self.server.mobile.status(params.get('token', [''])[0]))
+            elif parts.path == '/api/mobile/live-preview':
+                try:
+                    self.reply(200, self.server.previews.get(params.get('id', [''])[0]), 'image/jpeg')
+                except ValueError:
+                    self.reply(404, {'error': 'Geen momentopname beschikbaar.'})
+            elif parts.path == '/api/mobile/home':
+                self.reply(200, self.server.vod.home_context() | {'live_channel': self.server.previews.current_channel()})
             elif parts.path == '/api/mobile/vod':
-                self.reply(200, self.server.vod.catalog(params.get('kind', ['movie'])[0],
-                    params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0], params.get('sort', ['title'])[0]))
+                kind = params.get('kind', ['movie'])[0]
+                result = self.server.vod.catalog(kind, params.get('category', [''])[0], params.get('q', [''])[0], params.get('offset', ['0'])[0], params.get('sort', ['title'])[0])
+                if result.get('signature'):
+                    self.server.artwork_warmer.request_page(result, kind)
+                self.reply(200, result)
             elif parts.path == '/api/mobile/recording-cover':
                 try:
                     data = self.server.thumbnails.get(params.get('id', [''])[0])
@@ -142,6 +159,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(404, {'error': 'Thumbnail nog niet beschikbaar.'})
             elif parts.path == '/api/mobile-library':
                 self.reply(200, self.server.vod.settings(params.get('refresh', ['0'])[0] == '1'))
+            elif parts.path == '/api/image-cache':
+                self.reply(200, self.server.logos.status())
             elif parts.path == '/api/artwork-settings':
                 self.reply(200, self.server.artwork.status())
             elif parts.path == '/api/mobile/vod/detail':
@@ -268,10 +287,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.vod.save_selection(data.get('selection'))
             elif path == '/api/mobile-library/imdb':
                 result['count'] = self.server.vod.chart.save(data.get('entries'))
+            elif path == '/api/image-cache':
+                result.update(self.server.logos.configure(data.get('limit_gb')))
             elif path == '/api/artwork-settings':
                 result['artwork'] = self.server.artwork.configure(data.get('key'))
             elif path == '/api/artwork-settings/test':
                 result.update(self.server.artwork.test())
+            elif path == '/api/mobile/resume':
+                result['items'] = self.server.vod.resume_items(data)
             elif path == '/api/mobile/pause':
                 result['player'] = self.server.mobile.pause(data.get('token'), data.get('paused'))
             elif path == '/api/mobile/stop':

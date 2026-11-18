@@ -207,32 +207,45 @@ class Artwork:
 
 
 class ArtworkWarmer:
-    """Three bounded download workers; featured artwork precedes catalogue scans."""
+    """Two bounded download workers for featured and requested catalogue pages."""
     def __init__(self, artwork):
         self.artwork = artwork
         self.closed = threading.Event()
         self.lock = threading.Lock()
         self.pending, self.retry = set(), {}
-        self.tasks = queue.PriorityQueue(maxsize=4096)
+        self.tasks = queue.PriorityQueue(maxsize=256)
         self.counter = itertools.count()
-        self.threads = [threading.Thread(target=self.run, daemon=True) for _ in range(3)]
+        self.threads = [threading.Thread(target=self.run, daemon=True) for _ in range(2)]
         self.threads.append(threading.Thread(target=self.scan, daemon=True))
         for worker in self.threads:
             worker.start()
+
+    def enqueue(self, signature, kind, identifier, asset, priority=1):
+        key = (signature, kind, identifier, asset)
+        with self.lock:
+            if self.closed.is_set() or key in self.pending or self.retry.get(key, 0) > time.monotonic():
+                return
+            try:
+                self.tasks.put_nowait((priority, next(self.counter), key))
+            except queue.Full:
+                return
+            self.pending.add(key)
+
+    def request_page(self, result, kind):
+        signature = self.artwork.vod.configuration()[2]
+        if result.get('signature') != signature[:16]:
+            return
+        for item in result.get('featured', []):
+            for asset in ('backdrop', 'poster'):
+                self.enqueue(signature, kind, item['id'], asset, 0)
+        for item in result.get('items', []):
+            self.enqueue(signature, kind, item['id'], 'poster', 1)
 
     def fill(self):
         for signature, kind, identifier, asset, priority in self.artwork.vod.artwork_candidates():
             if self.closed.is_set():
                 return
-            key = (signature, kind, identifier, asset)
-            with self.lock:
-                if key in self.pending or self.retry.get(key, 0) > time.monotonic():
-                    continue
-                try:
-                    self.tasks.put_nowait((priority, next(self.counter), key))
-                except queue.Full:
-                    return
-                self.pending.add(key)
+            self.enqueue(signature, kind, identifier, asset, priority)
 
     def scan(self):
         while not self.closed.is_set():
@@ -240,7 +253,7 @@ class ArtworkWarmer:
                 self.fill()
             except Exception:
                 pass  # Missing configuration or transient provider/DB failure.
-            self.closed.wait(30)
+            self.closed.wait(300)
 
     def run(self):
         while not self.closed.is_set():

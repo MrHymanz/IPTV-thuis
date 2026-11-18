@@ -9,6 +9,7 @@ function playbackMutation(path, body) {
   playbackQueue = pending.catch(()=>{});
   return pending;
 }
+let homeContext={signature:'',live_channel:''}, homeResumeGeneration=0, heroPreviewKey='';
 let origin = null, preview = null, toastTimer, lastPause = null, lastSaved = 0;
 function stored(storage,key) {try{return storage.getItem(key);}catch(_){return null;}}
 function store(storage,key,value) {try{if(value===null)storage.removeItem(key);else storage.setItem(key,value);}catch(_){}}
@@ -78,18 +79,51 @@ function renderRecordings() {
   $('home-recordings').replaceChildren(...(saved.length?saved.map(r=>recordingRow(r,true)):[element('p','empty','Nog niets opgenomen. In de gids vind je iets voor later.')]));
 }
 function renderHome() {
-  const featured=channels.find(c=>c.available&&c.epg?.now)||channels.find(c=>c.available);
+  const featured=channels.find(c=>c.available&&c.id===homeContext.live_channel)||channels.find(c=>c.available&&c.epg?.now)||channels.find(c=>c.available);
   $('home-channels').replaceChildren(...(channels.length?channels.slice(0,4).map(channelRow):[element('p','empty','Voeg eerst favorieten toe in het beheer van je mediacenter.')]));
   $('featured').disabled=!featured;
+  updateHeroPreview(featured);
   if(featured) {
     const p=featured.epg?.now; $('hero-channel').textContent=featured.label; $('hero-title').textContent=p?.title || 'Zet je favoriete zender aan.';
     $('hero-time').textContent=p ? clock(p.start)+' – '+clock(p.end)+' · nog '+Math.max(1,Math.ceil((p.end-Date.now()/1000)/60))+' min' : 'Je programma speelt direct op je telefoon.';
     $('hero-progress').style.width=progress(p)+'%'; $('hero-logo').replaceChildren(logo(featured)); $('featured').onclick=()=>openPlayer({kind:'live',id:featured.id});
   }
 }
+function updateHeroPreview(channel) {
+  const image=$('hero-live-image'),label=$('hero-preview-label');
+  const key=channel?channel.id+':'+Math.floor(Date.now()/30000):'';
+  if(key===heroPreviewKey)return;heroPreviewKey=key;
+  image.hidden=true;label.hidden=true;image.removeAttribute('src');
+  if(!channel||document.hidden)return;
+  let attempt=0;
+  const address='/api/mobile/live-preview?id='+encodeURIComponent(channel.id)+'&v='+Math.floor(Date.now()/30000);
+  image.onload=()=>{if(heroPreviewKey===key){image.hidden=false;label.hidden=false;}};
+  image.onerror=()=>{image.hidden=true;label.hidden=true;if(attempt++<2)setTimeout(()=>{if(heroPreviewKey===key&&!document.hidden)image.src=address+'&attempt='+attempt;},4000);};
+  image.src=address;
+}
+async function refreshHomeContinue() {
+  const generation=++homeResumeGeneration, signature=homeContext.signature;
+  let history=[];try{history=JSON.parse(stored(localStorage,'iptv-vod-history-'+signature)||'[]');}catch(_){}
+  if(!signature||!Array.isArray(history)||!history.length){$('home-continue').hidden=true;return;}
+  try{
+    const result=await api('/api/mobile/resume',{signature,items:history.slice(0,12)});
+    if(generation!==homeResumeGeneration||homeContext.signature!==signature)return;
+    const rows=(result.items||[]).slice(0,8).map(item=>{
+      const button=action('',()=>playVod(item,item.episode||null),'resume-card');
+      const progress=item.duration?Math.round(item.position/item.duration*100):0;
+      button.append(vodPoster(item,true),element('strong','',item.title));
+      if(item.episode)button.append(element('span','small-muted','Seizoen '+item.episode.season+' · aflevering '+item.episode.number));
+      button.append(element('span','resume-action','▶ Verder vanaf '+time(item.position)));
+      const track=element('span','vod-progress'),fill=element('span');fill.style.width=Math.min(100,progress)+'%';track.append(fill);button.append(track);
+      return button;
+    });
+    $('home-continue-list').replaceChildren(...rows);$('home-continue').hidden=!rows.length;
+  }catch(_){if(generation===homeResumeGeneration)$('home-continue').hidden=true;}
+}
 async function load() {
   try {
-    const [favorites,items,storage,status]=await Promise.all([api('/api/favorites'),api('/api/recordings'),api('/api/storage'),api('/api/status')]);
+    const [favorites,items,storage,status,context]=await Promise.all([api('/api/favorites'),api('/api/recordings'),api('/api/storage'),api('/api/status'),api('/api/mobile/home')]);
+    homeContext=context;
     channels=favorites; recordings=items; $('connection-message').hidden=true;document.querySelector('.connection-card').classList.remove('offline');document.querySelector('.connection-card strong').textContent='Verbonden met je mediacenter';
     const selected=$('guide-channel').value;
     $('guide-channel').replaceChildren(...channels.map(c=>new Option(c.label,c.id)));
@@ -97,7 +131,7 @@ async function load() {
     $('version').textContent='Versie '+(status.revision||'local').slice(0,8);
     $('storage-text').textContent=storage.available?(storage.free/1e9).toFixed(1)+' GB vrij van '+(storage.total/1e9).toFixed(0)+' GB':storage.error||'Opslag niet beschikbaar';
     $('storage-progress').style.width=storage.available?Math.max(0,100*(storage.total-storage.free)/storage.total)+'%':'0%';
-    renderHome(); renderChannels(); renderRecordings();
+    renderHome(); renderChannels(); renderRecordings();refreshHomeContinue();
   } catch(error) { document.querySelector('.connection-card').classList.add('offline');document.querySelector('.connection-card strong').textContent='Verbinding onderbroken';$('connection-message').textContent=error.message+' Controleer je wifi of WireGuard-VPN.'; $('connection-message').hidden=false; }
 }
 async function mutate(path,body,message) { try { await api(path,body); toast(message); await load(); if(location.hash==='#guide')renderGuide(); } catch(error){toast(error.message);} }
@@ -250,7 +284,7 @@ function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,co
 function playVod(item,episode=null,fromStart=false) {
   const kind=episode?'episode':'movie', id=episode?episode.id:item.id;
   const data={kind,id,signature:item.signature,library:vodLibrary(item),...(episode?{episode:{id:episode.id,title:episode.title,season:episode.season,number:episode.number}}:{})};
-  const saved=resume(playbackKey(data));data.position=fromStart?0:saved?.position||0;
+  const saved=resume(playbackKey(data));data.position=fromStart?0:saved?.position||item.position||0;
   if(item.duration&&data.position>=item.duration-5&&!episode)data.position=0;
   $('vod-detail').close();openPlayer(data);
 }
@@ -308,14 +342,34 @@ function showView() {
   document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==(vod?'vod':view)+'-view');
   document.querySelectorAll('.nav-button').forEach(e=>{const active=e.dataset.go===(vod?'home':view);e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   document.querySelectorAll('.media-tabs button').forEach(e=>{const active=e.dataset.go===(vod?view:'home');e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
-  window.scrollTo(0,0); if(view==='guide'&&channels.length)loadGuide();if(vod)enterVod(view==='films'?'movie':'series');
+  window.scrollTo(0,0); if(view==='guide'&&channels.length)loadGuide();if(vod)enterVod(view==='films'?'movie':'series');if(view==='home')refreshHomeContinue();
 }
 function clearVideo() {
   attaching=true; clearTimeout(playerTimer); clearInterval(heartbeat); if(hls){hls.destroy();hls=null;}
   video.pause(); video.removeAttribute('src'); video.load(); origin=null;preview=null;lastPause=null;attaching=false;
 }
-function setLoading(message) { $('player-loading').hidden=false; $('player-status').textContent=message; $('retry-player').hidden=true; }
-function failPlayer(message) { for(const id of ['timeline','rewind','forward'])$(id).disabled=true;if($('player-title').textContent==='Verbinden…')$('player-title').textContent='Even niet beschikbaar';$('player-loading').hidden=true;$('player-message').textContent=message;$('retry-player').hidden=false;$('pause').disabled=true; }
+function setPlayerStage(phase, message='') {
+  const stages=['connecting','preparing','buffering'];
+  const current=stages.indexOf(phase);
+  document.querySelectorAll('[data-player-step]').forEach((step,index)=>{
+    step.classList.toggle('complete',phase==='playing'||(current>=0&&index<current));
+    step.classList.toggle('current',phase!=='playing'&&index===current);
+    if(phase!=='playing'&&index===current)step.setAttribute('aria-current','step');else step.removeAttribute('aria-current');
+  });
+  $('player-stage-note').textContent=message||({connecting:'Verbinding maken met de aanbieder…',preparing:'Video ontvangen. Klaarmaken voor je telefoon…',buffering:'Video klaar. De speler vult de buffer…',playing:'Je kijkt nu.',error:'Afspelen is gestopt.'}[phase]||'');
+}
+function setLoading(message,phase='connecting') { $('player-loading').hidden=false; $('player-status').textContent=message; $('retry-player').hidden=true;setPlayerStage(phase,message); }
+function failPlayer(message) { for(const id of ['timeline','rewind','forward'])$(id).disabled=true;if($('player-title').textContent==='Verbinden…')$('player-title').textContent='Even niet beschikbaar';$('player-loading').hidden=true;$('player-message').textContent=message;$('retry-player').hidden=false;$('pause').disabled=true;setPlayerStage('error',message); }
+function stopFailedPlayer(message) {
+  const token=player?.token;clearVideo();failPlayer(message);
+  if(token)playbackMutation('/api/mobile/stop',{token}).then(()=>{if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}).catch(()=>{});
+}
+function handlePlayerState(state) {
+  if(!['preempted','error','stopped'].includes(state.state))return false;
+  if(state.state==='error'&&state.retryable===false)stopFailedPlayer(state.message);
+  else restartPlayer(state.message);
+  return true;
+}
 async function openPlayer(data, automatic=false) {
   if(!automatic) retries=0;
   if(['recording','movie','episode'].includes(data.kind)&&data.position===undefined)data={...data,position:resume(playbackKey(data))?.position||0};
@@ -341,13 +395,14 @@ async function openPlayer(data, automatic=false) {
     player=result.player; store(sessionStorage,'iptv-mobile-session',player.token);
     $('player-title').textContent=player.title;$('player-channel').textContent=player.channel;$('player-kind').textContent=player.kind==='live'?'LIVE':player.kind==='archive'?'TERUGKIJKEN':player.kind==='movie'?'FILM':player.kind==='episode'?'SERIE':'OPNAME';
     $('go-live').hidden=player.kind!=='live';$('player-message').textContent=player.kind==='live'?'Je kijkt live. Spoelen kan binnen het gebufferde deel.':player.kind==='recording'?'Je opname speelt vanaf het gekozen moment.':['movie','episode'].includes(player.kind)?'Je kijkt op jouw moment. De tv en opnames houden voorrang.':'Je kijkt de gekozen uitzending terug.';
-    setLoading('Je programma wordt klaargezet…');const started=Date.now();
+    setLoading('Verbinding maken met de aanbieder…');const started=Date.now();
     const poll=async()=>{
       if(generation!==playerGeneration||!player)return;
       try{
         const state=await api('/api/mobile/status?token='+encodeURIComponent(player.token));if(generation!==playerGeneration)return;
-        if(['preempted','error','stopped'].includes(state.state)){restartPlayer(state.message);return;}
+        if(handlePlayerState(state))return;
         player={...player,...state};
+        setPlayerStage(state.phase||'connecting');$('player-status').textContent=$('player-stage-note').textContent;
         if(state.ready){if(attachVideo(generation)!==false)heartbeat=setInterval(()=>checkPlayer(generation),10000);return;}
         if(Date.now()-started>30000){restartPlayer('Deze bron reageert niet.');return;}
         playerTimer=setTimeout(poll,1000);
@@ -361,17 +416,25 @@ async function openPlayer(data, automatic=false) {
 }
 async function checkPlayer(generation) {
   if(!player||generation!==playerGeneration)return;
-  try {const state=await api('/api/mobile/status?token='+encodeURIComponent(player.token));if(generation!==playerGeneration)return;if(['preempted','error','stopped'].includes(state.state))restartPlayer(state.message);}
+  try {const state=await api('/api/mobile/status?token='+encodeURIComponent(player.token));if(generation!==playerGeneration)return;handlePlayerState(state);}
   catch(error){if(generation===playerGeneration)failPlayer(error.message);}
+}
+async function recoverPlayer(message, generation=playerGeneration) {
+  if(!player||generation!==playerGeneration||!$('player').open)return;
+  try{
+    const state=await api('/api/mobile/status?token='+encodeURIComponent(player.token));
+    if(generation!==playerGeneration||handlePlayerState(state))return;
+  }catch(_){}
+  if(generation===playerGeneration)restartPlayer(message);
 }
 function attachVideo(generation) {
   if(!player||generation!==playerGeneration)return;
-  for(const id of ['timeline','rewind','forward','pause'])$(id).disabled=false;attaching=true;
+  for(const id of ['timeline','rewind','forward','pause'])$(id).disabled=false;attaching=true;setLoading('Video klaar. Even bufferen…','buffering');
   const nativeHls=video.canPlayType('application/vnd.apple.mpegurl');
   if(nativeHls&&/Apple/.test(navigator.vendor)){video.src=player.playlist;video.load();tryPlay();}
   else if(window.Hls?.isSupported()){
     hls=new Hls({enableWorker:false,backBufferLength:90,maxBufferLength:25});
-    hls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal&&generation===playerGeneration)restartPlayer('De videostream is onderbroken.');});
+    hls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal&&generation===playerGeneration)recoverPlayer('De videostream is onderbroken.',generation);});
     hls.on(Hls.Events.MANIFEST_PARSED,tryPlay);hls.loadSource(player.playlist);hls.attachMedia(video);
   }else if(nativeHls){video.src=player.playlist;video.load();tryPlay();}
   else{attaching=false;failPlayer('Deze browser ondersteunt deze videospeler niet. Gebruik Safari op je iPhone of een actuele Chrome-browser.');playbackMutation('/api/mobile/stop',{token:player.token}).catch(()=>{});return false;}
@@ -379,14 +442,16 @@ function attachVideo(generation) {
 }
 function restartPlayer(message) {
   if(restarting||!request||!$('player').open)return;restarting=true;
-  if(retries>=2){failPlayer(message||'Er is op dit moment geen vrij werkend kijkaccount.');clearInterval(heartbeat);return;}
-  retries++;const generation=playerGeneration;const resume=player?.kind==='live'?0:position();setLoading(message||'Ander vrij account proberen…');
+  const limit=['movie','episode'].includes(request.kind)?1:2;
+  if(retries>=limit){stopFailedPlayer(message||'Deze stream reageert niet. Probeer later opnieuw of kies een andere titel.');return;}
+  retries++;const generation=playerGeneration;const resume=player?.kind==='live'?0:position();setLoading((message?message+' ':'')+'Opnieuw verbinden · poging '+(retries+1)+' van '+(limit+1)+'…');
   setTimeout(()=>{if(generation===playerGeneration&&$('player').open)openPlayer({...request,position:resume},true);},600);
 }
 async function closePlayer() {
   const token=player?.token || stored(sessionStorage,'iptv-mobile-session'); if(player&&!video.ended&&['movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),JSON.stringify({position:position(),duration:player.duration}));saveVodProgress();} ++playerGeneration;clearVideo();player=null;request=null;
   if($('player').open)$('player').close();
   if(token)try{await playbackMutation('/api/mobile/stop',{token});if(stored(sessionStorage,'iptv-mobile-session')===token)store(sessionStorage,'iptv-mobile-session',null);}catch(_){}
+  refreshHomeContinue();
 }
 function position() {
   if(!player)return 0;if(origin===null&&video.seekable.length)origin=video.seekable.start(0);
@@ -442,9 +507,9 @@ $('timeline').oninput=()=>{preview=Number($('timeline').value);$('elapsed').text
 $('timeline').onchange=()=>{const target=Number($('timeline').value);preview=null;seek(target);};
 for(const event of ['timeupdate','durationchange','loadedmetadata','seeked'])video.addEventListener(event,updateTimeline);
 video.addEventListener('ended',()=>{if(player&&['recording','movie','episode'].includes(player.kind)){store(localStorage,'iptv-position-'+playbackKey(request),null);saveVodProgress(true);}});
-video.addEventListener('playing',()=>{$('player-loading').hidden=true;updateTimeline();});
-video.addEventListener('waiting',()=>{if(player&&video.readyState<3)setLoading('Even laden…');});
-video.addEventListener('error',()=>{if(player&&!attaching&&$('player').open)restartPlayer('De videostream kon niet worden geladen.');});
+video.addEventListener('playing',()=>{$('player-loading').hidden=true;setPlayerStage('playing');updateTimeline();});
+video.addEventListener('waiting',()=>{if(player&&video.readyState<3)setLoading('Even laden…','buffering');});
+video.addEventListener('error',()=>{if(player&&!attaching&&$('player').open)recoverPlayer('De videostream kon niet worden geladen.');});
 for(const event of ['pause','play'])video.addEventListener(event,()=>{
   updateTimeline();if(!player||attaching||!player.ready)return;const paused=video.paused;if(lastPause===paused)return;lastPause=paused;
   if(hls&&player.kind!=='live'){if(paused)hls.stopLoad();else hls.startLoad();}
