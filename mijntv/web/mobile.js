@@ -11,6 +11,7 @@ function playbackMutation(path, body) {
 }
 let homeContext={signature:''}, homeResumeGeneration=0, heroPreviewKey='';
 let nativeCountdownExit=false,nextWasFullscreen=false,nextRequestFullscreen=false;
+let libraryEpoch=0, historyMutationQueue=Promise.resolve();
 let sharedLibrary=null, libraryRequest=null, progressQueue=Promise.resolve(), nextCandidate=null, nextTimer=null, nextDeadline=0;
 let activeProfile='home';
 let playerExpanded=false, nativePlayerFullscreen=false, nativeVideoFullscreen=false;
@@ -139,11 +140,13 @@ async function refreshSharedLibrary(){
   if(libraryRequest)return libraryRequest;
   libraryRequest=(async()=>{
     await progressQueue;
+    const epoch=libraryEpoch;
     let state=await api('/api/mobile/library?profile='+encodeURIComponent(activeProfile));
     const marker='iptv-library-imported-'+activeProfile+'-'+state.signature;
     if(!stored(localStorage,marker)){
       state=await api('/api/mobile/library/import',localLibraryImport(state.signature));store(localStorage,marker,'1');
     }
+    if(epoch!==libraryEpoch)return sharedLibrary||state;
     applySharedLibrary(state);return state;
   })();
   try{return await libraryRequest;}finally{libraryRequest=null;}
@@ -193,18 +196,41 @@ async function refreshHomeContinue() {
   try{
     const state=await refreshSharedLibrary();
     if(generation!==homeResumeGeneration||homeContext.signature!==signature)return;
-    const result={items:state.history};
-    const rows=(result.items||[]).slice(0,8).map(item=>{
+    renderHomeContinue(state.history);
+  }catch(_){if(generation===homeResumeGeneration)$('home-continue').hidden=true;}
+}
+function renderHomeContinue(items){
+    const rows=(items||[]).slice(0,8).map(item=>{
       const button=action('',()=>playVod(item,item.episode||null),'resume-card');
       const progress=item.duration?Math.round(item.position/item.duration*100):0;
       button.append(vodPoster(item,true),element('strong','',item.title));
       if(item.episode)button.append(element('span','small-muted','Seizoen '+item.episode.season+' · aflevering '+item.episode.number));
       button.append(element('span','resume-action',item.next_episode?'▶ Volgende aflevering':'▶ Verder vanaf '+time(item.position)));
       const track=element('span','vod-progress'),fill=element('span');fill.style.width=Math.min(100,progress)+'%';track.append(fill);button.append(track);
-      return button;
+      return continueCard(item,button,'resume-card-wrap');
     });
     $('home-continue-list').replaceChildren(...rows);$('home-continue').hidden=!rows.length;
-  }catch(_){if(generation===homeResumeGeneration)$('home-continue').hidden=true;}
+}
+function continueCard(item,card,className='vod-card-wrap'){
+  const wrapper=element('article',className);
+  const remove=action('×',()=>removeContinue(item,remove),'continue-remove');
+  remove.setAttribute('aria-label','Verwijder '+item.title+' uit Verder kijken');
+  remove.title='Verwijder uit Verder kijken';wrapper.append(card,remove);return wrapper;
+}
+function removeContinue(item,button){
+  button.disabled=true;++libraryEpoch;
+  const data={profile:activeProfile,signature:item.signature||vodSignature||homeContext.signature,kind:item.kind,id:item.id};
+  historyMutationQueue=historyMutationQueue.catch(()=>{}).then(async()=>{
+    try{
+      const state=await api('/api/mobile/history/remove',data);++libraryEpoch;
+      applySharedLibrary(state);
+      const previous=localJson('iptv-vod-history-'+state.signature,[]);
+      const history=(Array.isArray(previous)?previous:[]).filter(row=>row&&vodKey(row)!==vodKey(item));
+      store(localStorage,'iptv-vod-history-'+state.signature,JSON.stringify(history));
+      renderHomeContinue(state.history);if(!$('vod-view').hidden)renderVod();
+      toast('Verwijderd uit Verder kijken. Je kijkpositie blijft bewaard.');
+    }catch(error){++libraryEpoch;button.disabled=false;toast(error.message);}
+  });
 }
 async function load() {
   try {
@@ -325,10 +351,11 @@ function vodCard(item) {
   return row;
 }
 function renderVod() {
+  renderBottomNav();
   const local=vodFilter==='saved'?vodLocal('saved'):vodLocal('history');
   const q=vodState[vodKind].query.toLocaleLowerCase('nl-NL').trim();
   const shown=vodFilter==='all'?vodItems:local.filter(i=>i.kind===vodKind&&(vodAllowed===null||vodAllowed.includes(i.category))&&(!vodState[vodKind].category||i.category===vodState[vodKind].category)&&matchesLocalVod(i));
-  $('vod-list').replaceChildren(...shown.map(vodCard));
+  $('vod-list').replaceChildren(...shown.map(item=>vodFilter==='continue'?continueCard(item,vodCard(item)):vodCard(item)));
   if(!shown.length)$('vod-list').append(element('p','empty',vodFilter==='saved'?'Je kijklijst is nog leeg voor deze selectie. Bewaar een titel via de details.':vodFilter==='continue'?'Nog niets om verder te kijken voor deze selectie.':vodRequiresCategory?'Kies hierboven een bron of categorie. We halen het aanbod per categorie op.':vodState[vodKind].sort==='imdb250'?'Geen gekoppelde IMDb Top 250-films in deze selectie. Controleer de ranglijst in het beheer.':'Geen titels gevonden. Kies een andere categorie of zoekterm.'));
   $('vod-count').textContent=vodFilter==='all'&&vodRequiresCategory?'':(vodFilter==='all'?vodTotal:shown.length)+' titels';
   $('vod-list-heading').textContent=vodFilter==='saved'?'Mijn kijklijst':vodFilter==='continue'?'Verder kijken':vodKind==='movie'?'Ontdek iets moois':'Jouw volgende serie';
@@ -391,7 +418,7 @@ function enterVod(kind) {
   $('vod-length-label').textContent=series?'Afleveringsduur':'Speelduur';
   $('vod-length').replaceChildren(new Option('Alle lengtes',''),new Option(series?'Korter dan 30 minuten':'Korter dan 90 minuten','short'),new Option(series?'30–60 minuten':'90–120 minuten','medium'),new Option(series?'Langer dan 60 minuten':'Langer dan 120 minuten','long'));
   renderVodFilterOptions();
-  $('vod-category').replaceChildren(new Option('Alle categorieën',''));vodFilter='all';loadVod();
+  $('vod-category').replaceChildren(new Option('Alle categorieën',''));vodFilter='all';renderBottomNav();loadVod();
 }
 async function saveVod(item) {
   const has=vodLocal('saved').some(x=>vodKey(x)===vodKey(item));
@@ -465,11 +492,26 @@ $('vod-variant').onchange=()=>{const item=vodVariants.find(item=>item.id===$('vo
 $('vod-more').onclick=()=>loadVod(true);$('vod-retry').onclick=()=>loadVod();$('vod-season').onchange=renderVodEpisodes;
 $('vod-close').onclick=()=>{++vodDetailGeneration;$('vod-detail').close();};$('vod-detail').addEventListener('cancel',()=>{++vodDetailGeneration;});
 
+function renderBottomNav(view=location.hash.slice(1)||'home'){
+  const vod=['films','series'].includes(view),nav=document.querySelector('.bottom-nav');
+  const definitions=vod?[['all','◇','Ontdekken'],['saved','♡','Mijn kijklijst'],['continue','▶','Verder kijken']]:[['home','⌂','Home'],['channels','▦','Zenders'],['guide','◷','Terugkijken'],['recordings','◉','Opnames']];
+  nav.setAttribute('aria-label',vod?(view==='films'?'Films':'Series')+' navigatie':'Live-tv navigatie');
+  // Keep focused buttons stable while data refreshes or a filter changes.
+  if(nav.dataset.context!==(vod?'vod':'live')){
+    nav.replaceChildren(...definitions.map(([key,icon,label])=>{
+      const button=action('',()=>{},'nav-button');button.append(element('span','',icon),document.createTextNode(label));button.firstChild.setAttribute('aria-hidden','true');
+      if(vod){button.dataset.vodFilter=key;button.onclick=()=>{vodFilter=key;renderBottomNav();if(!vodLoading&&vodSignature)renderVod();};}
+      else button.dataset.go=key;
+      return button;
+    }));nav.dataset.context=vod?'vod':'live';
+  }
+  for(const button of nav.children){const active=vod?button.dataset.vodFilter===vodFilter:button.dataset.go===view;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');}
+}
 function showView() {
   const requested=location.hash.slice(1)||'home', view=['home','channels','recordings','guide','films','series'].includes(requested)?requested:'home';
   const vod=['films','series'].includes(view);clearTimeout(vodSearchTimer);clearTimeout(vodPollTimer);if(!vod)++vodGeneration;
   document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==(vod?'vod':view)+'-view');
-  document.querySelectorAll('.nav-button').forEach(e=>{const active=e.dataset.go===(vod?'home':view);e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
+  renderBottomNav(view);
   document.querySelectorAll('.media-tabs button').forEach(e=>{const active=e.dataset.go===(vod?view:'home');e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   window.scrollTo(0,0); if(view==='guide'&&channels.length)loadGuide();if(vod){refreshSharedLibrary().then(()=>{if(vodFilter!=='all')renderVod();}).catch(()=>{});enterVod(view==='films'?'movie':'series');}if(view==='home')refreshHomeContinue();
 }

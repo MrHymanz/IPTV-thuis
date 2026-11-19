@@ -25,6 +25,9 @@ class Library:
                 parent TEXT NOT NULL,position REAL NOT NULL,duration REAL NOT NULL,completed INTEGER NOT NULL,
                 watched INTEGER NOT NULL,started INTEGER NOT NULL,sequence INTEGER NOT NULL,updated REAL NOT NULL,
                 PRIMARY KEY(profile,signature,kind,id));
+                CREATE TABLE IF NOT EXISTS library_dismissed (
+                profile TEXT NOT NULL,signature TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,
+                started INTEGER NOT NULL,PRIMARY KEY(profile,signature,kind,id));
                 CREATE TABLE IF NOT EXISTS library_context (
                 token TEXT PRIMARY KEY,profile TEXT NOT NULL,signature TEXT NOT NULL,kind TEXT NOT NULL,
                 id TEXT NOT NULL,parent TEXT NOT NULL,started INTEGER NOT NULL,expires REAL NOT NULL);
@@ -154,11 +157,24 @@ class Library:
                        (profile,signature,data['kind'],str(data['id']),int(data['saved']),time.time()))
         return self.snapshot(profile)
 
+    def remove_continue(self, data):
+        profile=data.get('profile','home');self.profile(profile)
+        kind=data.get('kind')
+        if kind not in ('movie','series'):raise ValueError('Kies een film of serie.')
+        signature,_,_=self.resolve(kind,data.get('id'))
+        if data.get('signature')!=signature[:16]:raise ValueError('Ongeldige bibliotheek.')
+        with self.store.connect() as db:
+            db.execute('INSERT OR REPLACE INTO library_dismissed VALUES (?,?,?,?,?)',
+                       (profile,signature,kind,str(data['id']),time.time_ns()))
+        return self.snapshot(profile)
+
     def snapshot(self, profile='home'):
         current=self.profile(profile);signature=self.signature()
         with self.store.connect() as db:
             saved=db.execute('SELECT * FROM library_saved WHERE profile=? AND signature=? AND saved=1 ORDER BY updated DESC LIMIT 300',(profile,signature)).fetchall()
             progress=db.execute("SELECT * FROM library_progress WHERE profile=? AND signature IN (?, 'local') ORDER BY started DESC,updated DESC LIMIT 3000",(profile,signature)).fetchall()
+            dismissed={(row['kind'],row['id']):row['started'] for row in db.execute(
+                'SELECT * FROM library_dismissed WHERE profile=? AND signature=?',(profile,signature))}
         positions,history,watchlist,seen={},[],[],set()
         for row in saved:
             try:watchlist.append(self.canonical(row['kind'],row['id']))
@@ -171,6 +187,7 @@ class Library:
                                 'completed':bool(row['completed']),'watched':bool(row['watched'])}
                 if row['kind']=='recording':continue
                 kind='series' if row['kind']=='episode' else 'movie';identifier=row['parent'] if kind=='series' else row['id']
+                if row['started']<=dismissed.get((kind,identifier),-1):continue
                 if (kind,identifier) in seen:continue
                 seen.add((kind,identifier))
                 if row['completed']:

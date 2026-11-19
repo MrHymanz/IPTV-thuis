@@ -64,10 +64,14 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request('GET','/api/mobile/library',auth=False)[0],401)
         status,raw=self.request('GET','/api/mobile/library')
         self.assertEqual(status,200);self.assertEqual(json.loads(raw)['profile']['name'],'Thuis')
-        for path in ('/api/mobile/library','/api/mobile/library/import','/api/mobile/progress','/api/mobile/preferences','/api/mobile/tracks'):
+        for path in ('/api/mobile/history/remove','/api/mobile/library','/api/mobile/library/import','/api/mobile/progress','/api/mobile/preferences','/api/mobile/tracks'):
             self.assertEqual(self.request('POST',path,{},auth=False)[0],401)
             self.assertEqual(self.request('POST',path,{},custom=False)[0],403)
         self.assertEqual(self.request('GET','/api/mobile/library?profile=unknown')[0],400)
+        with patch.object(self.server.library,'remove_continue',return_value={'history':[]}) as remove:
+            body={'kind':'movie','id':'7','signature':'test'}
+            self.assertEqual(self.request('POST','/api/mobile/history/remove',body)[0],200)
+            remove.assert_called_once_with(body)
         status,raw=self.request('POST','/api/mobile/preferences',{'preferences':{'autoplay_next':False,'subtitle_language':'off'}})
         self.assertEqual(status,200);self.assertFalse(json.loads(raw)['profile']['preferences']['autoplay_next'])
         with patch.object(self.server.mobile,'select_tracks',return_value={'token':'safe','tracks':{}}) as choose:

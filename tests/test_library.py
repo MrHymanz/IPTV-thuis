@@ -91,3 +91,45 @@ class SharedLibraryTests(unittest.TestCase):
         for invalid in (float('nan'),float('inf'),-1,True):
             with self.subTest(invalid=invalid),self.assertRaises(ValueError):self.progress(position=invalid)
         with self.assertRaises(ValueError):self.library.preferences('home',{'autoplay_next':'yes'})
+
+    def dismiss(self, kind='movie', key='7', **extra):
+        return self.library.remove_continue(dict(signature=self.signature,kind=kind,id=key,**extra))
+
+    def test_dismiss_movie_preserves_resume_watchlist_and_survives_restart(self):
+        self.library.save({'signature':self.signature,'kind':'movie','id':'7','saved':True})
+        self.player();self.progress(position=500)
+        state=self.dismiss()
+        self.assertEqual(state['history'],[])
+        self.assertEqual(state['positions'][self.signature+'-movie-7']['position'],500)
+        self.assertEqual(len(state['saved']),1)
+        self.progress(sequence=2,position=600)
+        restarted=Library(self.store,self.vod,self.recordings,Mock())
+        self.assertEqual(restarted.snapshot()['history'],[])
+        self.player('new');self.progress('new',position=700)
+        self.assertEqual(self.library.snapshot()['history'][0]['position'],700)
+
+    def test_dismiss_series_hides_next_episode_and_older_episodes(self):
+        self.player('older',kind='episode',key='100');self.progress('older')
+        self.player('latest',kind='episode',key='101');self.progress('latest',position=2520,duration=2520,ended=True)
+        self.assertTrue(self.library.snapshot()['history'][0]['next_episode'])
+        self.assertEqual(self.dismiss('series')['history'],[])
+        self.assertTrue(self.library.snapshot()['positions'][self.signature+'-episode-101']['watched'])
+        self.player('new',kind='episode',key='202');self.progress('new')
+        self.assertEqual(self.library.snapshot()['history'][0]['episode']['id'],'202')
+
+    def test_dismiss_is_profile_scoped_and_old_import_cannot_resurrect(self):
+        person=self.library.add_profile('Ander')
+        self.player('other',profile=person['id']);self.progress('other')
+        self.dismiss()
+        state=self.library.import_local({'signature':self.signature,'client':'old-browser',
+            'progress':[{'kind':'movie','id':'7','position':500,'duration':6480}]})
+        self.assertEqual(state['history'],[])
+        self.assertEqual(len(self.library.snapshot(person['id'])['history']),1)
+
+    def test_dismiss_rejects_invalid_scope_without_mutating_history(self):
+        self.player();self.progress()
+        for data in ({'kind':'episode','id':'100','signature':self.signature},
+                     {'kind':'movie','id':'7','signature':'wrong'},
+                     {'kind':'movie','id':'7','signature':self.signature,'profile':'missing'}):
+            with self.subTest(data=data),self.assertRaises(ValueError):self.library.remove_continue(data)
+        self.assertEqual(len(self.library.snapshot()['history']),1)

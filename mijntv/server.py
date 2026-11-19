@@ -302,6 +302,8 @@ class Handler(BaseHTTPRequestHandler):
                         raise
             elif path == '/api/mobile/library':
                 result.update(self.server.library.save(data))
+            elif path == '/api/mobile/history/remove':
+                result.update(self.server.library.remove_continue(data))
             elif path == '/api/mobile/library/import':
                 result.update(self.server.library.import_local(data))
             elif path == '/api/mobile/progress':

@@ -107,3 +107,23 @@ De speler meldt voortgang ongeveer iedere vijf seconden en bij sluiten. Sessieve
 Bij films en afleveringen leest dezelfde FFmpeg-verbinding de beschikbare audiotalen en ondertitelingssporen. Origineel gemarkeerde audio heeft voorrang, daarna de bronstandaard en daarna het eerste audiospoor wanneer de bron de oorspronkelijke taal niet aangeeft. Nederlandse tekstondertiteling staat standaard aan waar beschikbaar; het tandwiel kan dit standaard uitzetten. **Audio en ondertiteling** onder de video laat beschikbare talen kiezen en ondertitels uitschakelen. De keuze blijft bij spoelen en herverbinden van dezelfde video behouden. Een taalwijziging stopt eerst de oude decoder en hervat dezelfde sessie op de huidige positie; er komt geen tweede providerverbinding bij.
 
 Tekstondertitels worden naar WebVTT omgezet en via dezelfde beveiligde HLS-route aangeboden, met de tijdstempelcorrectie van de videosegmenten. De native iPhone-fullscreenbediening kan deze ondertiteling eveneens kiezen. Beeldondertitels zoals PGS/DVD worden als niet ondersteund aangegeven; er worden geen ontbrekende ondertitels van externe sites gedownload. Bij het einde van een aflevering verlaat iPhone de native videoweergave om de aftelling en annuleerknop te tonen. Na doorspelen wordt opnieuw native fullscreen geprobeerd; als iOS hiervoor een nieuwe tik verlangt blijft de knop **Volledig scherm** beschikbaar.
+
+## Verder kijken en navigatie
+
+Bij films en series staan onderaan **Ontdekken**, **Mijn kijklijst** en
+**Verder kijken**. Deze knoppen bedienen dezelfde filters als de knoppen boven
+het aanbod. Live-tv houdt Home, Zenders, Terugkijken en Opnames.
+
+Met het kruisje op een kaart in Verder kijken verwijder je de film of de hele
+serie uit dit overzicht, ook op andere apparaten met hetzelfde kijkprofiel.
+Dit werkt zowel op Home als in het film- en serieoverzicht. Kijkpositie,
+bekeken afleveringen en Mijn kijklijst blijven bewaard. Als je de titel later
+zelf opnieuw afspeelt, verschijnt hij weer zodra er kijkvoortgang is.
+
+`POST /api/mobile/history/remove` vereist de bestaande login en CSRF-controle,
+met `profile`, de huidige `signature`, `kind` (`movie`/`series`) en `id`.
+De server bewaart een verwijdertijd per profiel, provider en titel in
+`library_dismissed`. Voortgang uit oudere afspeelsessies en een oude lokale
+migratie kunnen de titel daardoor niet opnieuw zichtbaar maken. Een nieuwe
+expliciete afspeelsessie krijgt een latere starttijd. Er worden geen bestaande
+voortgangsrecords verwijderd.
