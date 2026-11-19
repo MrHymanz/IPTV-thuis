@@ -223,7 +223,7 @@ class MobilePlayback:
                 raise ValueError('De mobiele videospeler kon niet starten.') from None
             session = dict(token=token, directory=directory, process=process, state='loading', message='',
                            kind=kind, id=identifier, title=title, channel=label, duration=duration,
-                           position=offset, account=account, seen=time.monotonic(), start=data.get('start'), paused=False,
+                           position=offset, account=account, account_role=(source or {}).get('account'), seen=time.monotonic(), start=data.get('start'), paused=False,
                            requested_at=requested_at, transcoder_at=time.monotonic(), ready_logged=False, failure='unknown', decoded=False, native_vod=native_vod, duration_verified=False,
                            initial_position=initial_position, output=output, command=command, first_segment=offset,
                            last_served=offset-1, seek_generation=0, tracks={'audio':[], 'subtitles':[]},
@@ -353,8 +353,8 @@ class MobilePlayback:
                 s['ready_logged'] = True
                 now = time.monotonic()
                 logging.getLogger('mijntv.stream').info(
-                    'mobile_ready kind=%s preparation_seconds=%.2f stream_seconds=%.2f total_seconds=%.2f',
-                    s['kind'], s['transcoder_at']-s['requested_at'], now-s['transcoder_at'], now-s['requested_at'])
+                    'mobile_ready kind=%s account=%s role_version=2 preparation_seconds=%.2f stream_seconds=%.2f total_seconds=%.2f',
+                    s['kind'], s.get('account_role') or 'none', s['transcoder_at']-s['requested_at'], now-s['transcoder_at'], now-s['requested_at'])
             if s['state'] not in ('stopped', 'preempted', 'error'):
                 code = s['process'].poll()
                 if code is not None:
@@ -362,8 +362,8 @@ class MobilePlayback:
                         s['state'] = 'ended'
                     else:
                         logging.getLogger('mijntv.stream').info(
-                            'mobile_failed kind=%s category=%s exit_code=%s stream_seconds=%.2f',
-                            s['kind'], s['failure'], code, time.monotonic()-s['transcoder_at'])
+                            'mobile_failed kind=%s account=%s role_version=2 category=%s exit_code=%s stream_seconds=%.2f',
+                            s['kind'], s.get('account_role') or 'none', s['failure'], code, time.monotonic()-s['transcoder_at'])
                         self._stop(s, 'error', self.failure_details(s['failure'])[0])
                 elif ready:
                     s['state'] = 'paused' if s['paused'] else 'playing'

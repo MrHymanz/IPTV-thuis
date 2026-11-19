@@ -36,6 +36,7 @@ class Feed:
         self.bytes_read = 0
         self.created_at = time.monotonic()
         self.last_data = time.monotonic()
+        self.last_observation = self.last_data
 
     def subscribe(self):
         with self.lock:
@@ -62,11 +63,16 @@ class Feed:
                 return
             if not self.bytes_read:
                 logging.getLogger('mijntv.stream').info(
-                    'stream_first_data channel_id=%s source_id=%s account=%s wait_seconds=%.2f',
+                    'stream_first_data channel_id=%s source_id=%s account=%s role_version=2 wait_seconds=%.2f',
                     self.channel['id'], self.source['id'],
                     self.source.get('account', 'primary'), time.monotonic()-self.created_at)
             self.bytes_read += len(chunk)
             self.last_data = time.monotonic()
+            if self.last_data-self.last_observation >= 60:
+                logging.getLogger('mijntv.stream').info(
+                    'stream_data channel_id=%s source_id=%s account=%s role_version=2 bytes=%s',
+                    self.channel['id'], self.source['id'], self.source.get('account', 'primary'), self.bytes_read)
+                self.last_observation = self.last_data
             self.recent.append(chunk)
             for consumer in list(self.consumers):
                 try:
@@ -154,7 +160,7 @@ class Feed:
             if self.closed:
                 return
             self.closed = True
-            logging.getLogger('mijntv.stream').info('stream_feed_end channel_id=%s source_id=%s account=%s reason=%s bytes=%s duration_seconds=%.1f idle_seconds=%.1f',
+            logging.getLogger('mijntv.stream').info('stream_feed_end channel_id=%s source_id=%s account=%s role_version=2 reason=%s bytes=%s duration_seconds=%.1f idle_seconds=%.1f',
                 self.channel['id'], self.source['id'], self.source.get('account', 'primary'),
                 reason, self.bytes_read, time.monotonic()-self.created_at, time.monotonic()-self.last_data)
             for consumer in self.consumers:
@@ -297,7 +303,7 @@ class StreamHub:
             if current:
                 current.close()
                 self.feeds.pop(current.token,None)
-            feed = Feed(channel,source)
+            feed = Feed(channel,dict(source, account=account))
             feed.account_key = key
             feed.recording = recording
             self.slots[slot] = feed

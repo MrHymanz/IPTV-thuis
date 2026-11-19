@@ -39,6 +39,18 @@ class SharedStreamTests(unittest.TestCase):
         self.channel={'id':'one','label':'NPO 1'}
         self.source={'id':'primary','url':f'http://127.0.0.1:{self.provider.server_port}/live?password=private'}
 
+    def test_recording_feed_logs_verified_role_without_changing_source(self):
+        source=dict(self.source)
+        feed=self.hub.acquire('secondary',self.channel,source,recording=True)
+        self.assertEqual(feed.source['account'],'recording')
+        self.assertNotIn('account',source)
+        feed.last_observation-=61
+        with self.assertLogs('mijntv.stream',level='INFO') as logs:feed.publish(b'bytes')
+        text=' '.join(logs.output)
+        self.assertIn('account=recording role_version=2',text)
+        self.assertIn('stream_data',text)
+        self.assertNotIn('password=private',text)
+
     def test_small_network_fragments_do_not_exhaust_consumer_buffers(self):
         payload = (b'\x47' + b'X'*187)*1600
         class FragmentedResponse(io.BytesIO):
