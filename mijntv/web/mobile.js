@@ -429,7 +429,7 @@ function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,co
 function playVod(item,episode=null,fromStart=false,backup=null) {
   const kind=episode?'episode':'movie', id=episode?episode.id:item.id;
   const data={kind,id,signature:item.signature,library:vodLibrary(item),...(episode?{episode:{id:episode.id,title:episode.title,season:episode.season,number:episode.number}}:{})};
-  const selectedBackup=backup||(vodBackupChoice?.library_id===item.id?vodBackupChoice:null);
+  const selectedBackup=backup||(vodBackupChoice?.library_id===item.id&&vodBackupChoice.library_kind===item.kind?vodBackupChoice:null);
   if(selectedBackup)Object.assign(data,{backup_id:selectedBackup.id,backup_signature:selectedBackup.signature});
   const saved=resume(playbackKey(data));data.position=fromStart?0:saved?.position||item.position||0;
   if(item.duration&&data.position>=item.duration-5&&!episode)data.position=0;
@@ -461,7 +461,7 @@ async function loadVodBackups(item=vodSelected,generation=vodDetailGeneration){
     for(const match of result.items){
       const button=action('',()=>{
         if(match.score<95&&!confirm('Controleer deze mogelijke match: '+match.title+(match.year?' ('+match.year+')':'')+'. Wil je deze versie gebruiken?'))return;
-        const backup={id:match.id,signature:result.backup_signature,library_id:item.id};
+        const backup={id:match.id,signature:result.backup_signature,library_id:item.id,library_kind:item.kind};
         if(item.kind==='movie')playVod(item,null,false,backup);
         else{vodBackupChoice=backup;$('vod-backup-notice').textContent='Gekozen: '+match.title+'. Kies hieronder de gewenste aflevering; seizoen en afleveringsnummer worden gecontroleerd.';toast('Backupversie gekozen. Kies nu een aflevering.');}
       },'backup-match');
