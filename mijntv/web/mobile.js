@@ -305,7 +305,7 @@ function openProgramme(p) {
 }
 // Films and series use separate server catalogues and category IDs.
 let vodKind='movie', vodItems=[], vodTotal=0, vodSignature='', vodGeneration=0, vodDetailGeneration=0;
-let vodVariants=[];
+let vodVariants=[],vodBackupChoice=null,backupOfferGeneration=0;
 let vodFilter='all', vodSelected=null, vodSearchTimer, vodLoading=false, vodRequiresCategory=false, vodAllowed=null, vodPollTimer;
 let vodFeatured=[], featuredIndex=0, featuredKey='', featuredFrame, featuredDay='';
 function initialVodState(kind){let options={};try{options=JSON.parse(stored(localStorage,'iptv-vod-filters-'+kind)||'{}')||{};}catch(_){}return {category:'',query:'',sort:stored(localStorage,'iptv-vod-sort-'+kind)||'title',genre:options.genre||'',year:options.year||'',min_rating:options.min_rating||'',length:options.length||''};}
@@ -426,9 +426,11 @@ async function saveVod(item) {
   catch(error){toast(error.message);}
 }
 function vodLibrary(item) {return {id:item.id,kind:item.kind,title:item.title,cover:item.cover,year:item.year,rating:item.rating,category:item.category||'',display_title:item.display_title,genre:item.genre,duration:item.duration};}
-function playVod(item,episode=null,fromStart=false) {
+function playVod(item,episode=null,fromStart=false,backup=null) {
   const kind=episode?'episode':'movie', id=episode?episode.id:item.id;
   const data={kind,id,signature:item.signature,library:vodLibrary(item),...(episode?{episode:{id:episode.id,title:episode.title,season:episode.season,number:episode.number}}:{})};
+  const selectedBackup=backup||(vodBackupChoice?.library_id===item.id?vodBackupChoice:null);
+  if(selectedBackup)Object.assign(data,{backup_id:selectedBackup.id,backup_signature:selectedBackup.signature});
   const saved=resume(playbackKey(data));data.position=fromStart?0:saved?.position||item.position||0;
   if(item.duration&&data.position>=item.duration-5&&!episode)data.position=0;
   $('vod-detail').close();openPlayer(data);
@@ -449,8 +451,29 @@ function renderVodEpisodes() {
     if(ep.description)copy.append(element('small','',ep.description.slice(0,180)));row.append(element('span','',String(ep.number).padStart(2,'0')),copy,element('span','','▷'));return row;}));
   if(!episodes.length)$('vod-episodes').append(element('p','empty','Geen afleveringen beschikbaar voor dit seizoen.'));
 }
+async function loadVodBackups(item=vodSelected,generation=vodDetailGeneration){
+  if(!item)return;const offerGeneration=++backupOfferGeneration;
+  $('vod-backup-notice').textContent='Backupaanbod vergelijken…';$('vod-backup-items').replaceChildren();
+  try{
+    const result=await api('/api/mobile/vod/alternatives?'+new URLSearchParams({kind:item.kind,id:item.id}));
+    if(generation!==vodDetailGeneration||offerGeneration!==backupOfferGeneration||!$('vod-detail').open)return;
+    $('vod-backup-notice').textContent=result.automatic?'Bij een bezet hoofdaccount gebruiken we automatisch een passende backuptitel.':result.notice;
+    for(const match of result.items){
+      const button=action('',()=>{
+        if(match.score<95&&!confirm('Controleer deze mogelijke match: '+match.title+(match.year?' ('+match.year+')':'')+'. Wil je deze versie gebruiken?'))return;
+        const backup={id:match.id,signature:result.backup_signature,library_id:item.id};
+        if(item.kind==='movie')playVod(item,null,false,backup);
+        else{vodBackupChoice=backup;$('vod-backup-notice').textContent='Gekozen: '+match.title+'. Kies hieronder de gewenste aflevering; seizoen en afleveringsnummer worden gecontroleerd.';toast('Backupversie gekozen. Kies nu een aflevering.');}
+      },'backup-match');
+      button.append(element('strong','',match.title),element('span','small-muted',[match.year,match.reason,match.id===result.automatic?'Automatische match':item.kind==='series'?'Kies deze serieversie':'Kies en speel via backup'].filter(Boolean).join(' · ')));
+      $('vod-backup-items').append(button);
+    }
+  }catch(error){if(generation===vodDetailGeneration&&offerGeneration===backupOfferGeneration)$('vod-backup-notice').textContent=error.message;}
+}
+$('vod-backup-refresh').onclick=()=>loadVodBackups();
+$('backup-options').onclick=()=>{const library=request?.library;if(!library)return;closePlayer().then(()=>openVodDetail(library));};
 async function openVodDetail(item) {
-  const generation=++vodDetailGeneration;vodSelected=null;vodVariants=[];$('vod-variant-wrap').hidden=true;$('vod-detail-title').textContent=item.title;$('vod-detail-kind').textContent=item.kind==='series'?'SERIE':'FILM';$('vod-detail-cover').replaceChildren(vodPoster(item));
+  const generation=++vodDetailGeneration;vodSelected=null;vodVariants=[];vodBackupChoice=null;$('vod-backup-notice').textContent='';$('vod-backup-items').replaceChildren();$('vod-variant-wrap').hidden=true;$('vod-detail-title').textContent=item.title;$('vod-detail-kind').textContent=item.kind==='series'?'SERIE':'FILM';$('vod-detail-cover').replaceChildren(vodPoster(item));
   for(const id of ['vod-detail-meta','vod-detail-cast','vod-detail-description'])$(id).textContent='';$('vod-detail-notice').textContent='Details ophalen…';$('vod-detail-actions').replaceChildren();$('vod-seasons').hidden=true;
   if(!$('vod-detail').open)$('vod-detail').showModal();
   try {
@@ -462,6 +485,7 @@ async function openVodDetail(item) {
     $('vod-detail-title').textContent=detail.title;$('vod-detail-cover').replaceChildren(vodPoster(detail));
     $('vod-detail-meta').textContent=[detail.year,detail.genre,detail.duration?Math.round(detail.duration/60)+' min':'',detail.rating?'★ '+detail.rating:''].filter(Boolean).join(' · ');
     $('vod-detail-description').textContent=detail.description||'Geen beschrijving beschikbaar.';$('vod-detail-cast').textContent=[detail.director?'Regie: '+detail.director:'',detail.cast?'Met: '+detail.cast:''].filter(Boolean).join('\n');$('vod-detail-notice').textContent=detail.notice||'';renderVodActions();
+    loadVodBackups(vodSelected,generation);
     if(detail.kind==='series'){
       const seasons=[...new Set((detail.episodes||[]).map(e=>e.season))].sort((a,b)=>a-b);$('vod-season').replaceChildren(...seasons.map(n=>new Option(n===0?'Specials':'Seizoen '+n,String(n))));
       const history=vodLocal('history').find(x=>x.kind==='series'&&x.id===item.id);if(seasons.includes(history?.episode?.season))$('vod-season').value=String(history.episode.season);
@@ -553,7 +577,7 @@ async function openPlayer(data, automatic=false) {
   video.controls=!['movie','episode'].includes(data.kind);$('fullscreen').disabled=true;
   if(['recording','movie','episode'].includes(data.kind)&&data.position===undefined)data={...data,position:resume(playbackKey(data))?.position||0};
   const generation=++playerGeneration, previous=player?.token || stored(sessionStorage,'iptv-mobile-session');
-  request={...data}; restarting=false;clearVideo();player=null;
+  request={...data};$('backup-options').hidden=!data.library; restarting=false;clearVideo();player=null;
   for(const id of ['timeline','rewind','forward','pause'])$(id).disabled=true;
   $('timeline').value=0;$('elapsed').textContent='0:00';$('total').textContent=data.kind==='live'?'Live':'…';
   setLoading(data.kind==='recording'?'Je opname openen…':'Een vrij kijkaccount zoeken…');
@@ -574,6 +598,7 @@ async function openPlayer(data, automatic=false) {
     player={...result.player,progress_sequence:0};renderPlayerLanguages(); store(sessionStorage,'iptv-mobile-session',player.token);
     $('player-title').textContent=player.title;$('player-channel').textContent=player.channel;$('player-kind').textContent=player.kind==='live'?'LIVE':player.kind==='archive'?'TERUGKIJKEN':player.kind==='movie'?'FILM':player.kind==='episode'?'SERIE':'OPNAME';
     $('go-live').hidden=player.kind!=='live';$('player-message').textContent=player.kind==='live'?'Je kijkt live. Spoelen kan binnen het gebufferde deel.':player.kind==='recording'?'Je opname speelt vanaf het gekozen moment.':['movie','episode'].includes(player.kind)?'Je kijkt op jouw moment. De tv en opnames houden voorrang.':'Je kijkt de gekozen uitzending terug.';
+    if(player.account_role==='backup')$('player-message').textContent='Je kijkt via het backupaccount. Je voortgang blijft bij deze titel bewaard.';
     setLoading('Verbinding maken met de aanbieder…');const started=Date.now();
     const poll=async()=>{
       if(generation!==playerGeneration||!player)return;

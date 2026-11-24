@@ -272,8 +272,12 @@ class VOD:
             self.check(configuration)
             self.failed.pop((signature, scope), None)
             with self.discovery.lock, self.store.connect() as db:
+                retained={signature}
+                for setting in ('source','backup_source'):
+                    address=self.store.setting(setting)
+                    if address:retained.add(hashlib.sha256(address.encode()).hexdigest())
                 for table in ('vod_items', 'vod_categories', 'vod_meta', 'vod_details', 'vod_backdrops', 'vod_discovery'):
-                    db.execute('DELETE FROM '+table+' WHERE signature<>?', (signature,))
+                    db.execute('DELETE FROM '+table+' WHERE signature NOT IN ('+','.join('?' for _ in retained)+')', tuple(retained))
                 self.discovery.invalidate(db, signature, kind, rows.keys())
                 if category:
                     db.execute('DELETE FROM vod_items WHERE signature=? AND kind=? AND category=?', (signature, kind, category))

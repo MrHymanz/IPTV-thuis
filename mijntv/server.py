@@ -169,6 +169,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, self.server.logos.status())
             elif parts.path == '/api/artwork-settings':
                 self.reply(200, self.server.artwork.status())
+            elif parts.path == '/api/mobile/vod/alternatives':
+                self.reply(200,self.server.mobile.vod_backups.offers(params.get('kind',['movie'])[0],params.get('id',[''])[0]))
             elif parts.path == '/api/mobile/vod/detail':
                 kind, key = params.get('kind', ['movie'])[0], params.get('id', [''])[0]
                 detail = self.server.vod.detail(kind, key)

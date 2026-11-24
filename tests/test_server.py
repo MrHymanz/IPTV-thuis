@@ -79,6 +79,12 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(self.request('POST','/api/mobile/tracks',body)[0],200)
             choose.assert_called_once_with(body)
 
+    def test_backup_match_route_is_private_and_keeps_canonical_scope(self):
+        self.assertEqual(self.request('GET','/api/mobile/vod/alternatives?kind=movie&id=7',auth=False)[0],401)
+        with patch.object(self.server.mobile.vod_backups,'offers',return_value={'state':'ready','items':[]}) as offers:
+            self.assertEqual(self.request('GET','/api/mobile/vod/alternatives?kind=movie&id=7')[0],200)
+            offers.assert_called_once_with('movie','7')
+
     def test_discovery_filter_and_variant_routes_pass_validated_scope(self):
         with patch.object(self.server.vod, 'catalog', return_value={'items':[], 'categories':[]}) as catalog:
             self.assertEqual(self.request('GET', '/api/mobile/vod?kind=movie&genre=Drama&year=2001&min_rating=8&length=medium')[0], 200)

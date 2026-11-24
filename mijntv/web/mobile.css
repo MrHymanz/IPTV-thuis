@@ -81,3 +81,5 @@ dialog{max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-
 .vod-card-wrap>.vod-card{width:100%}
 .continue-remove{position:absolute;top:4px;right:4px;display:grid;place-items:center;width:44px;height:44px;padding:0;border:1px solid #ffffff70;border-radius:50%;background:#183a33ed;color:#fff;font-size:26px;line-height:1;box-shadow:0 2px 8px #0003}
 .continue-remove:disabled{opacity:.5}
+
+#vod-backup{clear:both;margin:20px 0;padding:14px;border:1px solid var(--line);border-radius:12px}#vod-backup summary{cursor:pointer;font-weight:600}.backup-match{display:grid;gap:6px;text-align:left;width:100%;padding:14px;margin:8px 0;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;font:inherit}.backup-match .small-muted{font-size:12px;line-height:1.5}

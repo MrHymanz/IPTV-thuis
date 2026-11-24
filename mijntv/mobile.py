@@ -17,6 +17,7 @@ from .streams import RecordingConflict
 from .vod import VOD
 from .seekable import SeekableVOD
 from . import tracks
+from .vod_backup import BackupMatches
 
 
 class MobilePlayback:
@@ -26,6 +27,7 @@ class MobilePlayback:
         self.sessions = {}
         self.seekable = SeekableVOD(self)
         self.current = None
+        self.vod_backups = BackupMatches(store,self.vod)
         self.avoid = {}
         self.closed = threading.Event()
         self.worker = threading.Thread(target=self.monitor, daemon=True)
@@ -121,6 +123,19 @@ class MobilePlayback:
             address = str(self.recordings.playback(row['id']))
             local_recording = (row, address, self.duration(address) or max(1, row['end'] - row['start']))
         account = None
+        vod_role='primary';alternate=None
+        if vod:
+            with self.streams.lock:
+                occupied=self.streams.occupied_accounts()
+                primary_busy=self.streams.account_key('primary') in occupied
+                backup_busy=self.streams.account_key('backup') in occupied
+            logging.getLogger('mijntv.stream').info('mobile_vod_accounts kind=%s primary_busy=%s backup_busy=%s explicit_backup=%s',kind,primary_busy,backup_busy,data.get('backup_id') is not None)
+            if primary_busy or data.get('backup_id') is not None:
+                if backup_busy:
+                    raise RecordingConflict('De kijkaccounts zijn bezet door de tv of een opname. Probeer het later opnieuw.')
+                try:alternate=self.vod_backups.playback(kind,str(data.get('id')),data.get('backup_id'),data.get('backup_signature'))
+                except ValueError as error:raise RecordingConflict(str(error)) from None
+                vod_role='backup'
         with self.streams.lock:
             if self.closed.is_set():
                 raise ValueError('De mobiele speler wordt afgesloten.')
@@ -146,11 +161,12 @@ class MobilePlayback:
                 self.vod.check(vod['configuration'])
                 identifier = str(data.get('id'))
                 try:
-                    source, account = self._source({'url': vod['url'], 'account': 'primary'})
+                    if alternate:self.vod_backups.catalog.check(alternate['configuration'])
+                    source, account = self._source({'url': (alternate or vod)['url'], 'account': vod_role})
                 except RecordingConflict:
                     raise RecordingConflict('Het hoofdaccount voor films en series is bezet of tijdelijk niet beschikbaar. De tv en opnames houden voorrang. Probeer later opnieuw.') from None
-                address = vod['url']
-                title, label, duration = vod['title'], vod['label'], vod['duration']
+                address = (alternate or vod)['url']
+                title, label, duration = vod['title'], vod['label'], (alternate or vod)['duration']
             else:
                 identifier = data.get('id')
                 channel = next((f for f in self.store.favorites(playback=True) if f['id'] == identifier), None)
@@ -372,7 +388,7 @@ class MobilePlayback:
                 'phase': 'buffering' if ready else 'preparing' if s['decoded'] else 'connecting',
                 'retryable': self.failure_details(s['failure'])[1], 'failure': s['failure'],
                 'native_vod': self.seekable.enabled(s), 'initial_position':s['initial_position'],
-                'position':0 if self.seekable.enabled(s) else s['position'], 'tracks':tracks.options(s)}
+                'position':0 if self.seekable.enabled(s) else s['position'], 'tracks':tracks.options(s),'account_role':s.get('account_role')}
 
     def pause(self, token, paused):
         if not isinstance(paused, bool):
@@ -454,6 +470,7 @@ class MobilePlayback:
 
     def close(self):
         self.closed.set()
+        self.vod_backups.close()
         with self.streams.lock:
             for s in list(self.sessions.values()):
                 self._cleanup(s)
