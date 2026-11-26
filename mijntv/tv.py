@@ -986,6 +986,9 @@ class TV:
                 self.player.command('set_property', 'mute', self.muted)
             if not self.playing_recording:
                 sources = channel.get('sources') or [channel]
+                from .account_health import usable
+                sources=[source for source in sources if usable(self.store,source.get('account','primary'))]
+                if not sources:raise ValueError('Geen actief kijkaccount beschikbaar. Controleer de accountstatus in het beheer.')
                 source = next((item for item in sources if item.get('id') == getattr(self, 'active_source_id', None)), sources[0])
                 self.source_health = None
                 self.source_healthy_since = None
@@ -1199,6 +1202,8 @@ class TV:
         sources = self.channels[self.selected].get('sources') or [self.channels[self.selected]]
         tried = getattr(self, 'tried_sources', set())
         active = next((s for s in sources if s.get('id') == getattr(self, 'active_source_id', None)), {})
+        from .account_health import usable
+        sources=[s for s in sources if usable(self.store,s.get('account','primary'))]
         untried = [s for s in sources if s.get('id') and s['id'] not in tried]
         # Try the other account before cycling through variants on a failed provider.
         alternative = next((s for s in untried if s.get('account', 'primary') != active.get('account', 'primary')),

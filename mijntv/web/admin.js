@@ -258,7 +258,7 @@ $('overscan-reset').onclick = () => { $('overscan-x').value = 0; $('overscan-y')
 async function loadBackup() {
   const backup = await api('/api/backup-account');
   $('backup-status').textContent = backup.configured
-    ? `Backupaccount ingesteld · ${backup.matched} van ${backup.total} favorieten gematcht · voorkeur: ${backup.preferred === 'backup' ? 'backupaccount' : 'oorspronkelijk account'}. ${backup.error || ''}`
+    ? `Backupaccount ingesteld · ${backup.matched} van ${backup.total} favorieten gematcht · voorkeur: ${backup.preferred === 'backup' ? 'backupaccount' : 'oorspronkelijk account'}. ${backup.health?.blocked?'Niet bruikbaar: account is verlopen of geblokkeerd; wordt automatisch overgeslagen.':backup.error || ''}`
     : 'Nog geen backupaccount ingesteld. Je huidige account en favorieten blijven behouden.';
   $('backup-refresh').disabled = !backup.configured;
   $('backup-remove').disabled = !backup.configured;

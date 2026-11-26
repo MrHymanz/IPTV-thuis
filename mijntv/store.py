@@ -514,6 +514,8 @@ class Store:
             remembered = dict(db.execute('SELECT id,source_id FROM favorite_source').fetchall())
             from .backup import BackupAccount
             backup = BackupAccount(self)
+            from .account_health import usable
+            usable_accounts={role:usable(self,role) for role in ('primary','backup')}
             preferred_account = db.execute("SELECT value FROM settings WHERE key='preferred_account'").fetchone()
             preferred_account = preferred_account[0] if preferred_account else 'primary'
             result = []
@@ -538,6 +540,7 @@ class Store:
                     if source['url'] not in used:
                         used.add(source['url'])
                         sources.append(source)
+                sources=[source for source in sources if usable_accounts.get(source['account'],True)]
                 saved = remembered.get(item['id'])
                 sources.sort(key=lambda source: (source['account'] != preferred_account, source['id'] != saved))
                 item['available'] = bool(sources)

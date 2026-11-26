@@ -40,6 +40,7 @@ class RecoveryTests(unittest.TestCase):
 
     def setUp(self):
         self.tv=TV.__new__(TV)
+        self.tv.store=Mock();self.tv.store.setting.return_value=''
         self.tv.recordings=None
         self.tv.watching=True;self.tv.playing_recording=None
         self.tv.channels=[{'url':'https://private.example/secret'}];self.tv.selected=0
@@ -50,6 +51,15 @@ class RecoveryTests(unittest.TestCase):
     def recover(self, now):
         with patch('mijntv.tv.time.monotonic',return_value=now):
             self.tv.recover_stream('stalled',{'time-pos':0})
+
+    def test_expired_backup_is_skipped_even_when_the_screen_has_cached_candidates(self):
+        self.tv.channels=[{'id':'favorite','sources':[{'id':'primary','account':'primary'},
+            {'id':'backup','account':'backup'},{'id':'variant','account':'primary'}]}]
+        self.tv.active_source_id='primary';self.tv.tried_sources={'primary'}
+        with patch('mijntv.account_health.usable',side_effect=lambda store,role:role!='backup'):
+            self.recover(100)
+        self.assertEqual(self.tv.active_source_id,'variant')
+        self.tv.start_stream.assert_called_once_with(self.tv.channels[0])
 
     def test_restart_uses_same_channel_and_closes_old_player(self):
         player=self.tv.player

@@ -281,6 +281,9 @@ class StreamHub:
                     raise RecordingConflict('De opnamebron is onderbroken. Stop de opname voordat je opnieuw verbindt.')
                 return current
             account = source.get('account', 'recording' if slot=='secondary' else 'primary')
+            from .account_health import usable
+            if self.store and not usable(self.store,account):
+                raise RecordingConflict('Dit provideraccount is verlopen of geblokkeerd.')
             key = self.account_key(account)
             self.preempt_mobile(account)
             for other_slot, feed in self.slots.items():

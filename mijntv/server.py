@@ -23,6 +23,7 @@ from .thumbnails import RecordingThumbnails
 from .artwork import Artwork, ArtworkWarmer
 from .previews import LivePreviews
 from .library import Library
+from .account_health import AccountHealth
 
 
 def hash_password(password, salt):
@@ -67,9 +68,11 @@ class AdminServer(ThreadingHTTPServer):
         self.previews.mobile = self.mobile
         self.library = Library(store, self.vod, self.recordings, self.mobile)
         self.artwork_warmer = ArtworkWarmer(self.artwork)
+        self.account_health=AccountHealth(store)
         self.logos.start()
 
     def server_close(self):
+        if hasattr(self,'account_health'):self.account_health.close()
         if hasattr(self, 'previews'):
             self.previews.close()
         if hasattr(self, 'logos'):

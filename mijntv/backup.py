@@ -79,7 +79,8 @@ class BackupAccount:
                                 'sources': len(sources)})
             count = db.execute('SELECT count(*) FROM backup_channels').fetchone()[0]
             settings = dict(db.execute("SELECT key,value FROM settings WHERE key LIKE 'backup_%' OR key='preferred_account'"))
-        return {'configured': bool(settings.get('backup_source')), 'channels': count,
+        from .account_health import health
+        return {'health':health(self.store,'backup'),'configured': bool(settings.get('backup_source')), 'channels': count,
                 'preferred': settings.get('preferred_account', 'primary'),
                 'refreshed_at': float(settings.get('backup_refreshed_at', '0')),
                 'error': settings.get('backup_error', ''), 'matches': matches,

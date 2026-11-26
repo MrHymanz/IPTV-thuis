@@ -7,6 +7,7 @@ import threading
 import time
 
 from .catchup import Catchup
+from .account_health import usable
 from .discovery import identity, normalized
 from .vod import VOD, REFRESH_SECONDS, identifier
 
@@ -75,7 +76,7 @@ class BackupMatches:
 
     def warm(self, kind):
         configuration=self.catalog.provider.configuration()
-        if not configuration or self.closed.is_set():return
+        if not configuration or self.closed.is_set() or not usable(self.store,'backup'):return
         key=(configuration[2],kind)
         with self.lock:
             if key in self.workers or self.retry.get(key,0)>time.monotonic():return
@@ -155,6 +156,7 @@ class BackupMatches:
         configuration=self.catalog.provider.configuration()
         base={'items':[],'automatic':None,'signature':primary[2][:16],'backup_signature':''}
         if not configuration:return dict(base,state='unconfigured',notice='Het backupaccount heeft geen bruikbare Xtream-login.')
+        if not usable(self.store,'backup'):return dict(base,state='inactive',notice='Het backupaccount is verlopen of geblokkeerd en wordt overgeslagen.')
         self.warm(kind);signature=configuration[2];name,year=title_identity(reference)
         with self.store.connect() as db:
             sync=db.execute('SELECT complete FROM backup_vod_sync WHERE signature=? AND kind=?',(signature,kind)).fetchone()

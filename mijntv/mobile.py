@@ -18,6 +18,7 @@ from .vod import VOD
 from .seekable import SeekableVOD
 from . import tracks
 from .vod_backup import BackupMatches
+from .account_health import usable
 
 
 class MobilePlayback:
@@ -76,6 +77,8 @@ class MobilePlayback:
             if archive and account != 'primary':
                 continue
             key = self.streams.account_key(account)
+            if not usable(self.store,account):
+                reasons.append(account+':inactive');continue
             reasons.append(account+(':busy' if key in occupied else ':cooldown' if self.avoid.get(key, 0) > now else ':available'))
             if key not in occupied:
                 free.append((source, key))
@@ -127,10 +130,12 @@ class MobilePlayback:
         if vod:
             with self.streams.lock:
                 occupied=self.streams.occupied_accounts()
-                primary_busy=self.streams.account_key('primary') in occupied
-                backup_busy=self.streams.account_key('backup') in occupied
+                primary_busy=self.streams.account_key('primary') in occupied or not usable(self.store,'primary')
+                backup_busy=self.streams.account_key('backup') in occupied or not usable(self.store,'backup')
             logging.getLogger('mijntv.stream').info('mobile_vod_accounts kind=%s primary_busy=%s backup_busy=%s explicit_backup=%s',kind,primary_busy,backup_busy,data.get('backup_id') is not None)
             if primary_busy or data.get('backup_id') is not None:
+                if not usable(self.store,'backup'):
+                    raise RecordingConflict('Het backupaccount is verlopen of geblokkeerd. Controleer dit in het beheer.')
                 if backup_busy:
                     raise RecordingConflict('De kijkaccounts zijn bezet door de tv of een opname. Probeer het later opnieuw.')
                 try:alternate=self.vod_backups.playback(kind,str(data.get('id')),data.get('backup_id'),data.get('backup_signature'))
