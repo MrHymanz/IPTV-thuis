@@ -482,7 +482,7 @@ class Store:
         return len(found)
 
     def forget_source(self, favorite_id, source_id):
-        with self.connect() as db:
+        with self.connect(timeout=0) as db:
             db.execute('DELETE FROM favorite_source WHERE id=? AND source_id=?', (favorite_id, source_id))
 
     def remember_source(self, favorite_id, source_id):

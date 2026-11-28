@@ -77,6 +77,29 @@ class RecoveryTests(unittest.TestCase):
         self.recover(900)
         self.assertEqual(self.tv.start_stream.call_count,4)
 
+    def test_definite_eof_retries_after_five_seconds_instead_of_a_minute(self):
+        self.tv.recovery_attempts=[100]
+        with patch('mijntv.tv.time.monotonic',return_value=103):self.tv.recover_stream('eof')
+        self.tv.start_stream.assert_not_called();self.assertEqual(self.tv.recovery_due,105)
+        with patch('mijntv.tv.time.monotonic',return_value=105):self.tv.recover_stream('eof')
+        self.tv.start_stream.assert_called_once()
+
+    def test_hard_retry_limit_applies_even_when_another_account_exists(self):
+        self.tv.channels[0]['sources']=[{'id':'primary','account':'primary'},{'id':'backup','account':'backup'}]
+        self.tv.active_source_id='primary';self.tv.tried_sources={'primary'}
+        self.tv.recovery_attempts=[0,60,120,180,240,300,360,420]
+        self.recover(480)
+        self.tv.start_stream.assert_not_called();self.assertEqual(self.tv.recovery_due,600)
+
+    def test_all_sources_cooling_down_waits_without_starting_a_known_bad_input(self):
+        self.tv.channels=[{'id':'channel','sources':[{'id':'a','account':'primary'}]}]
+        self.tv.active_source_id='a';self.tv.tried_sources={'a'}
+        self.recover(100)
+        self.tv.start_stream.assert_not_called();self.assertEqual(self.tv.recovery_due,220)
+        self.assertEqual(self.tv.recovery_attempts,[])
+        with patch('mijntv.tv.time.monotonic',return_value=220):self.tv.recover_stream('source_cooldown')
+        self.tv.start_stream.assert_called_once()
+
     def test_fallback_advances_without_changing_favorite(self):
         self.tv.channels[0]['sources']=[{'id':'primary','url':'one'},
                                         {'id':'backup','url':'two','group_name':'4K'},
@@ -103,7 +126,7 @@ class RecoveryTests(unittest.TestCase):
             {'id':'primary','url':'one','account':'primary'},
             {'id':'backup:other','url':'two','account':'backup'}]
         self.tv.active_source_id='primary';self.tv.tried_sources={'primary'}
-        self.tv.recovery_attempts=[0,60,120,180,240,300,360,420]
+        self.tv.recovery_attempts=[0,60,120,180,240,300]
         self.recover(480)
         self.assertEqual(self.tv.active_source_id,'backup:other')
         self.tv.start_stream.assert_called_once()

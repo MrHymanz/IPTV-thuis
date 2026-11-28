@@ -72,6 +72,52 @@ class SharedStreamTests(unittest.TestCase):
             self.assertEqual(b''.join(chunks), payload)
         self.assertFalse(any('stream_consumer_slow' in line for line in logs.output))
 
+    def test_startup_burst_larger_than_old_eight_mib_queue_keeps_viewer(self):
+        feed=Feed(self.channel,self.source);feed.started=True;viewer=feed.subscribe()
+        chunk=b'x'*65536
+        for _ in range(220):feed.publish(chunk)
+        self.assertIn(viewer,feed.consumers)
+        self.assertEqual(viewer.qsize(),220)
+        self.assertEqual(viewer.maxsize,512)
+        feed.close()
+
+    def test_temporary_full_buffer_waits_without_holding_feed_lock(self):
+        feed=Feed(self.channel,self.source);feed.started=True;viewer=feed.subscribe()
+        for _ in range(viewer.maxsize):viewer.put_nowait(b'old')
+        writer=threading.Thread(target=feed.publish,args=(b'new',));writer.start()
+        time.sleep(.08)
+        self.assertTrue(writer.is_alive())
+        self.assertTrue(feed.lock.acquire(timeout=.1));feed.lock.release()
+        self.assertEqual(viewer.get_nowait(),b'old')
+        writer.join(timeout=.5);self.assertFalse(writer.is_alive())
+        self.assertIn(viewer,feed.consumers)
+        self.assertEqual(viewer.queue[-1],b'new')
+        feed.close()
+
+    def test_close_interrupts_a_backpressured_provider_promptly(self):
+        feed=Feed(self.channel,self.source);feed.started=True;viewer=feed.subscribe()
+        for _ in range(viewer.maxsize):viewer.put_nowait(b'old')
+        writer=threading.Thread(target=feed.publish,args=(b'new',));writer.start();time.sleep(.08)
+        before=time.monotonic();feed.close();writer.join(timeout=.3)
+        self.assertFalse(writer.is_alive());self.assertLess(time.monotonic()-before,.3)
+
+    def test_slow_viewer_cannot_delay_a_healthy_recording_consumer(self):
+        feed=Feed(self.channel,self.source);feed.started=True;feed.recording=True
+        viewer=feed.subscribe();recorder=feed.subscribe()
+        for _ in range(viewer.maxsize):viewer.put_nowait(b'old')
+        before=time.monotonic();feed.publish(b'new')
+        self.assertLess(time.monotonic()-before,.2)
+        self.assertNotIn(viewer,feed.consumers);self.assertIn(recorder,feed.consumers)
+        self.assertEqual(recorder.get_nowait(),b'new');self.assertIsNone(viewer.get_nowait())
+        self.assertFalse(feed.closed);feed.close()
+
+    def test_permanently_stalled_single_viewer_is_still_bounded(self):
+        feed=Feed(self.channel,self.source);feed.started=True;viewer=feed.subscribe()
+        for _ in range(viewer.maxsize):viewer.put_nowait(b'old')
+        with patch('mijntv.streams.CONSUMER_WAIT_SECONDS',.05):feed.publish(b'new')
+        self.assertNotIn(viewer,feed.consumers);self.assertIsNone(viewer.get_nowait())
+        feed.close()
+
     def test_view_and_record_share_one_upstream_and_home_keeps_recording(self):
         first=self.hub.view(self.channel,self.source)
         view=urlopen(first,timeout=3);self.addCleanup(view.close)

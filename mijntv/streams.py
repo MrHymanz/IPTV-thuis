@@ -16,6 +16,10 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError,URLError
 
 
+CONSUMER_BUFFER_CHUNKS = 512  # At most 32 MiB at the 64 KiB reader chunk size.
+CONSUMER_WAIT_SECONDS = 2
+
+
 class RecordingConflict(ValueError):
     pass
 
@@ -37,12 +41,13 @@ class Feed:
         self.created_at = time.monotonic()
         self.last_data = time.monotonic()
         self.last_observation = self.last_data
+        self.last_backpressure_log = float('-inf')
 
     def subscribe(self):
         with self.lock:
             if self.closed:
                 return None
-            consumer = queue.Queue(maxsize=128)
+            consumer = queue.Queue(maxsize=CONSUMER_BUFFER_CHUNKS)
             for chunk in self.recent:
                 consumer.put_nowait(chunk)
             self.consumers.add(consumer)
@@ -74,23 +79,48 @@ class Feed:
                     self.channel['id'], self.source['id'], self.source.get('account', 'primary'), self.bytes_read)
                 self.last_observation = self.last_data
             self.recent.append(chunk)
-            for consumer in list(self.consumers):
+            consumers=list(self.consumers)
+        # Never wait with the feed/account lock held: TV preemption and recorder
+        # teardown must remain possible while a reader catches up.
+        for consumer in consumers:
+            with self.lock:
+                if self.closed:return
+                if consumer not in self.consumers:continue
                 try:
                     consumer.put_nowait(chunk)
+                    continue
                 except queue.Full:
-                    with consumer.mutex:
-                        buffered_bytes = sum(len(part) for part in consumer.queue if part is not None)
-                    logging.getLogger('mijntv.stream').info(
-                        'stream_consumer_slow source_id=%s buffered_bytes=%s incoming_chunk_bytes=%s recording=%s',
-                        self.source['id'], buffered_bytes, len(chunk), self.recording)
-                    # Disconnect a slow consumer without interrupting the others.
-                    self.consumers.discard(consumer)
-                    while True:
-                        try:
-                            consumer.get_nowait()
-                        except queue.Empty:
-                            break
-                    consumer.put_nowait(None)
+                    independent_reader=any(other is not consumer and not other.full() for other in self.consumers)
+            waited=0
+            if not independent_reader:
+                started=time.monotonic();deadline=started+CONSUMER_WAIT_SECONDS;delivered=False
+                while time.monotonic()<deadline:
+                    with self.lock:
+                        if self.closed:return
+                        if consumer not in self.consumers:break
+                        if any(other is not consumer and not other.full() for other in self.consumers):break
+                    try:
+                        consumer.put(chunk,timeout=min(.05,max(.001,deadline-time.monotonic())))
+                        delivered=True;break
+                    except queue.Full:pass
+                waited=time.monotonic()-started
+                if delivered:
+                    if waited>=.1 and time.monotonic()-self.last_backpressure_log>=60:
+                        self.last_backpressure_log=time.monotonic()
+                        logging.getLogger('mijntv.stream').info('stream_backpressure source_id=%s wait_seconds=%.2f',self.source['id'],waited)
+                    continue
+            with self.lock:
+                if self.closed:return
+                if consumer not in self.consumers:continue
+                with consumer.mutex:buffered_bytes=sum(len(part) for part in consumer.queue if part is not None)
+                logging.getLogger('mijntv.stream').info(
+                    'stream_consumer_slow source_id=%s buffered_bytes=%s incoming_chunk_bytes=%s recording=%s wait_seconds=%.2f',
+                    self.source['id'],buffered_bytes,len(chunk),self.recording,waited)
+                self.consumers.discard(consumer)
+                while True:
+                    try:consumer.get_nowait()
+                    except queue.Empty:break
+                consumer.put_nowait(None)
 
     def read(self):
         manifest = None

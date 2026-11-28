@@ -14,6 +14,7 @@ import tkinter as tk
 
 from .player import Player
 from .logos import LogoCache
+from .recovery import SourceRecovery, retry_interval
 from .display import Display
 from .catchup import phase
 from .casting import YouTubeReceiver, number
@@ -989,12 +990,21 @@ class TV:
                 from .account_health import usable
                 sources=[source for source in sources if usable(self.store,source.get('account','primary'))]
                 if not sources:raise ValueError('Geen actief kijkaccount beschikbaar. Controleer de accountstatus in het beheer.')
+                policy=self.recovery_policy();now=time.monotonic()
+                ready=policy.available(self.channels[self.selected].get('id'),sources,now)
+                if not ready:
+                    due=policy.next_available(self.channels[self.selected].get('id'),sources,now)
+                    self.loading=False;self.defer_recovery('source_cooldown',None,due)
+                    self.show_error('De zenderbronnen herstellen. Nieuwe poging over '+str(max(1,math.ceil(due-now)))+' seconden…')
+                    return
+                sources=ready
                 source = next((item for item in sources if item.get('id') == getattr(self, 'active_source_id', None)), sources[0])
                 self.source_health = None
                 self.source_healthy_since = None
                 self.active_source_id = source.get('id')
                 self.tried_sources.add(source.get('id'))
                 channel = source
+            self.source_attempt_serial=getattr(self,'source_attempt_serial',0)+1
             self.player.watchdog_enabled = not self.playing_recording
             logging.getLogger('mijntv.stream').info('stream_start channel_index=%s', self.selected)
             url = self.recordings.viewing_url(self.channels[self.selected],channel) if self.recordings and not self.playing_recording else channel['url']
@@ -1164,10 +1174,20 @@ class TV:
                     return
                 # Keep the current screen's cached sources in the same order as the database.
                 channel['sources'].sort(key=lambda source: source['id'] != source_id)
+                self.recovery_policy().healthy(channel['id'],source_id)
                 self.remembered_source = (channel['id'], source_id)
                 self.tried_sources = {source_id}
                 self.recovery_attempts = []
                 logging.getLogger('mijntv.stream').info('stream_preferred source_id=%s', source_id)
+
+    def recovery_policy(self):
+        policy=getattr(self,'source_recovery',None)
+        if policy is None:policy=self.source_recovery=SourceRecovery()
+        return policy
+
+    def defer_recovery(self,reason,snapshot,due):
+        self.recovery_pending=(reason,snapshot)
+        self.recovery_due=due
 
     def recover_stream(self, reason, snapshot=None):
         if not self.watching or self.playing_recording or not self.channels:
@@ -1188,31 +1208,45 @@ class TV:
             else:
                 self.show_error('Kijkverbinding onderbroken. De opname blijft actief; herstel wordt afgewacht.')
             return
-        if reason == 'black_picture':
-            self.store.forget_source(self.channels[self.selected]['id'], self.active_source_id)
-            self.remembered_source = None
-        now = time.monotonic()
-        self.recovery_attempts = [stamp for stamp in self.recovery_attempts if now-stamp < 600]
-        if self.recovery_attempts and now-self.recovery_attempts[-1] < 60:
-            self.recovery_pending = (reason, snapshot)
+        now=time.monotonic()
+        channel=self.channels[self.selected];channel_id=channel.get('id');active_id=getattr(self,'active_source_id',None)
+        policy=self.recovery_policy()
+        if reason!='source_cooldown' and policy.failed(channel_id,active_id,getattr(self,'source_attempt_serial',0),now):
+            if channel_id:
+                try:self.store.forget_source(channel_id,active_id)
+                except sqlite3.Error:log=logging.getLogger('mijntv.stream');log.info('stream_preference_deferred')
+                self.remembered_source=None
+            logging.getLogger('mijntv.stream').info('stream_source_cooldown channel_index=%s source_id=%s',self.selected,active_id)
+        self.recovery_attempts=[stamp for stamp in self.recovery_attempts if now-stamp<600]
+        interval=retry_interval(reason,snapshot)
+        if self.recovery_attempts and now-self.recovery_attempts[-1]<interval:
+            self.defer_recovery(reason,snapshot,self.recovery_attempts[-1]+interval)
             return
-        log = logging.getLogger('mijntv.stream')
-        log.info('stream_fault reason=%s channel_index=%s snapshot=%s', reason, self.selected, snapshot)
-        self.recovery_pending = None
-        sources = self.channels[self.selected].get('sources') or [self.channels[self.selected]]
-        tried = getattr(self, 'tried_sources', set())
-        active = next((s for s in sources if s.get('id') == getattr(self, 'active_source_id', None)), {})
+        log=logging.getLogger('mijntv.stream')
+        self.recovery_pending=None
+        sources=channel.get('sources') or [channel]
+        active=next((s for s in sources if s.get('id')==active_id),{})
         from .account_health import usable
         sources=[s for s in sources if usable(self.store,s.get('account','primary'))]
-        untried = [s for s in sources if s.get('id') and s['id'] not in tried]
-        # Try the other account before cycling through variants on a failed provider.
-        alternative = next((s for s in untried if s.get('account', 'primary') != active.get('account', 'primary')),
-                           untried[0] if untried else None)
-        other_account = alternative and alternative.get('account', 'primary') != active.get('account', 'primary')
-        if len(self.recovery_attempts) >= max(3, min(8, len(sources))) and not other_account:
-            self.show_error('De uitzending blijft onderbroken. Kies een andere zender of druk op Terug.')
-            self.recovery_pending = (reason, snapshot)
+        ready=policy.available(channel_id,sources,now)
+        if sources and not ready:
+            self.defer_recovery('source_cooldown',snapshot,policy.next_available(channel_id,sources,now))
+            self.show_error('De zenderbronnen krijgen even rust. Verbinding wordt automatisch opnieuw geprobeerd…')
             return
+        tried=getattr(self,'tried_sources',set())
+        untried=[s for s in ready if s.get('id') and s['id'] not in tried]
+        candidates=untried or [s for s in ready if s.get('id')]
+        alternative=next((s for s in candidates if s.get('account','primary')!=active.get('account','primary')),
+                         candidates[0] if candidates else None)
+        other_account=alternative and alternative.get('account','primary')!=active.get('account','primary')
+        # A fresh second account may rescue an exhausted variant budget, but the
+        # global eight-attempt limit still bounds repeated provider failures.
+        if len(self.recovery_attempts)>=8 or (len(self.recovery_attempts)>=max(3,min(8,len(sources))) and not other_account):
+            due=max(now+60,self.recovery_attempts[0]+600) if self.recovery_attempts else now+60
+            self.defer_recovery(reason,snapshot,due)
+            self.show_error('De uitzending blijft onderbroken. Kies een andere zender of wacht op de volgende herstelpoging.')
+            return
+        log.info('stream_fault reason=%s channel_index=%s snapshot=%s',reason,self.selected,snapshot)
         self.recovery_attempts.append(now)
         if alternative:
             self.active_source_id = alternative['id']
@@ -1256,12 +1290,15 @@ class TV:
             self.open_panel('guide')
             self.show_error('Terugkijken gestopt: een geplande opname is gestart.')
             self.root.after(5000, self.error.place_forget)
-        if (self.recovery_pending and self.watching
-                and time.monotonic()-max(self.recovery_attempts[-1], getattr(self, 'recovery_checked_at', 0)) >= 60):
-            self.recovery_checked_at = time.monotonic()
-            reason, snapshot = self.recovery_pending
-            self.recovery_pending = None
-            self.recover_stream(reason, snapshot)
+        if self.recovery_pending and self.watching:
+            due=getattr(self,'recovery_due',None)
+            if due is None:
+                due=max(self.recovery_attempts[-1] if self.recovery_attempts else 0,getattr(self,'recovery_checked_at',0))+60
+            if time.monotonic()>=due:
+                self.recovery_checked_at=time.monotonic()
+                reason,snapshot=self.recovery_pending
+                self.recovery_pending=None
+                self.recover_stream(reason,snapshot)
         if self.player:
             if self.watching and not self.playing_recording and time.monotonic()-self.last_stream_sample >= 15:
                 self.last_stream_sample = time.monotonic()
